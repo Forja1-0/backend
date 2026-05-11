@@ -7,6 +7,7 @@ import {
   handleRpeResponse,
 } from "./handlers/training.handler.js";
 import { handleCheckinResponse } from "./handlers/checkin.handler.js";
+import { handleMealLog } from "./handlers/meal.handler.js";
 import { logger } from "../config/logger.js";
 
 /**
@@ -70,7 +71,14 @@ export async function routeMessage(user: User, text: string | null): Promise<voi
     return;
   }
 
-  // ── 3. Fallback ───────────────────────────────────────────────────────
+  // ── 3. Comidas (fallback inteligente con Gemini) ─────────────────────
+  // Si no es un comando explícito, intentamos parsearlo como comida.
+  if (text.length > 5) {
+    const isMeal = await handleMealLog(user, text);
+    if (isMeal) return;
+  }
+
+  // ── 4. Fallback genérico ──────────────────────────────────────────────
   logger.info("unhandled bot message", { jid, text: text.slice(0, 100) });
   await sendText(
     jid,
@@ -85,6 +93,7 @@ async function sendHelp(jid: string, name: string | null): Promise<void> {
     `*Comandos disponibles, ${n}:*\n\n` +
       `✅ *completé* / *listo* — Registrar entrenamiento completado\n` +
       `   _Ej: "completé piernas", "listo", "terminé"_\n\n` +
-      `_(Próximamente: registrar comidas, ver macros del día, etc.)_`,
+      `🥗 *Registro de comidas* — Escribí lo que comiste y yo me encargo\n` +
+      `   _Ej: "Me comí 200g de pollo con arroz", "desayuné 2 huevos"_\n`,
   );
 }
