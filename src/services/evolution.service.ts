@@ -16,7 +16,7 @@ async function evoFetch(path: string, init: RequestInit = {}): Promise<unknown> 
   });
   const text = await res.text();
   if (!res.ok) {
-    logger.error({ url, status: res.status, body: text }, "evolution api error");
+    logger.error("evolution api error", { url, status: res.status, body: text });
     throw new Error(`evolution ${res.status}: ${text}`);
   }
   return text ? JSON.parse(text) : null;

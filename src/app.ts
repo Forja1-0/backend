@@ -16,7 +16,7 @@ app.use(compression());
 app.use(express.json({ limit: "2mb" }));
 
 app.use((req, _res, next) => {
-  logger.debug({ method: req.method, path: req.path }, "request");
+  logger.debug("request", { method: req.method, path: req.path });
   next();
 });
 

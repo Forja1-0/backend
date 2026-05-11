@@ -25,8 +25,8 @@ evolutionWebhook.post("/evolution", async (req, res) => {
     const jid = msg.key.remoteJid;
 
     logger.info(
-      { jid, pushName: msg.pushName, type: msg.messageType, text },
       "wa incoming",
+      { jid, pushName: msg.pushName, type: msg.messageType, text },
     );
 
     const user = await linkOrCreateByJid(jid, msg.pushName);
@@ -38,6 +38,6 @@ evolutionWebhook.post("/evolution", async (req, res) => {
 
     await sendText(jid, reply);
   } catch (err) {
-    logger.error({ err }, "webhook handler failed");
+    logger.error("webhook handler failed", { err });
   }
 });

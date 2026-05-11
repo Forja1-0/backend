@@ -9,7 +9,7 @@ export const pool = new pg.Pool({
 });
 
 pool.on("error", (err) => {
-  logger.error({ err }, "pg pool error");
+  logger.error("pg pool error", { err });
 });
 
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
@@ -19,7 +19,7 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   const start = Date.now();
   const res = await pool.query<T>(text, params as any);
   const ms = Date.now() - start;
-  if (ms > 200) logger.warn({ sql: text, ms, rows: res.rowCount }, "slow query");
+  if (ms > 200) logger.warn("slow query", { sql: text, ms, rows: res.rowCount });
   return res;
 }
 

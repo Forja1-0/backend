@@ -17,7 +17,7 @@ onboardingRoutes.post("/start", async (req, res, next) => {
   try {
     const body = startBody.parse(req.body ?? {});
     const user = await repo.createUser(body);
-    logger.info({ userId: user.id }, "onboarding started");
+    logger.info("onboarding started", { userId: user.id });
     res.status(201).json({
       user_id: user.id,
       onboarding_step: user.onboarding_step,
@@ -52,7 +52,7 @@ onboardingRoutes.put("/:userId/step/:n", async (req, res, next) => {
       case 7: result = await repo.saveStep7(userId, data as any); break;
     }
 
-    logger.info({ userId, step: stepNum }, "onboarding step saved");
+    logger.info("onboarding step saved", { userId, step: stepNum });
     res.json({ ok: true, step: stepNum, result });
   } catch (err) {
     next(err);
@@ -74,7 +74,7 @@ onboardingRoutes.post("/:userId/consent", async (req, res, next) => {
     const userAgent = (req.headers["user-agent"] as string | undefined) ?? null;
 
     const consent = await repo.saveConsent(userId, data, ip, userAgent);
-    logger.info({ userId }, "consent saved");
+    logger.info("consent saved", { userId });
 
     res.json({ ok: true, consented_at: consent.consented_at });
   } catch (err) {
