@@ -4,7 +4,7 @@ import type { EvolutionWebhookEvent } from "../types/evolution.types.js";
 import { extractText } from "../types/evolution.types.js";
 import { isGroupJid } from "../utils/phone.js";
 import { linkOrCreateByJid } from "../repositories/user.repo.js";
-import { sendText } from "../services/evolution.service.js";
+import { routeMessage } from "../bot/router.js";
 
 export const evolutionWebhook = Router();
 
@@ -31,13 +31,9 @@ evolutionWebhook.post("/evolution", async (req, res) => {
 
     const user = await linkOrCreateByJid(jid, msg.pushName);
 
-    // ECHO de prueba — reemplazar por router de bot en paso 4.
-    const reply = text
-      ? `Te escuché, ${user.name ?? "che"}: "${text}"`
-      : `Recibí un mensaje (${msg.messageType ?? "desconocido"}) pero todavía no proceso ese tipo.`;
-
-    await sendText(jid, reply);
+    await routeMessage(user, text);
   } catch (err) {
     logger.error("webhook handler failed", { err });
   }
 });
+

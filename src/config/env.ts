@@ -8,7 +8,7 @@ const schema = z.object({
   EVOLUTION_API_URL: z.string().url(),
   EVOLUTION_API_KEY: z.string().min(1),
   EVOLUTION_INSTANCE: z.string().min(1),
-  ANTHROPIC_API_KEY: z.string().min(1),
+  GEMINI_API_KEY: z.string().min(1),
   CORS_ORIGINS: z.string().default(""),
   LANDING_URL: z.string().url().optional(),
   ONBOARDING_URL: z.string().url().optional(),
