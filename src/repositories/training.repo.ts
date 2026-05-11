@@ -57,6 +57,17 @@ export async function logTrainingComplete(
 }
 
 /**
+ * Registra un dia salteado.
+ */
+export async function logTrainingSkip(userId: string): Promise<void> {
+  await query(
+    `INSERT INTO training_logs (user_id, session_name, completed)
+     VALUES ($1, 'Saltado', false)`,
+    [userId],
+  );
+}
+
+/**
  * Actualiza el RPE de un training_log ya creado.
  */
 export async function setRpe(

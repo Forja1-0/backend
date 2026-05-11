@@ -2,87 +2,90 @@ import type { User } from "../../types/user.types.js";
 import * as trainingRepo from "../../repositories/training.repo.js";
 import { getSession, setSession, clearSession } from "../session.store.js";
 import { sendText } from "../../services/evolution.service.js";
+import * as T from "../personality/templates.js";
+import { extractStandaloneNumber } from "../parser/normalize.js";
 import { logger } from "../../config/logger.js";
 
 /**
- * Detecta si el mensaje es un comando "complete" / "listo" / "hice".
- * Retorna true si debe manejar este mensaje.
+ * Procesa "completé X" / "terminé X" / "listo".
+ * Graba el training_log y abre una sesion para capturar el RPE.
+ *
+ * El normalized viene del classifier, no del usuario crudo, por eso
+ * los regex aca asumen acentos ya stripados.
  */
-export function isCompleteCommand(text: string): boolean {
-  return /^(complet[eé]|listo|hice|terminé|termine|entrenam|lo hice)/i.test(
-    text.trim(),
-  );
-}
-
-/**
- * Maneja el comando "complete [sesión]" del usuario.
- * Paso 1: Registra el training_log y pide RPE.
- */
-export async function handleComplete(user: User, text: string): Promise<void> {
+export async function handleComplete(user: User, normalized: string): Promise<void> {
   const jid = user.wa_chat_id!;
 
-  // Intentamos detectar el plan de hoy automáticamente
   const todayPlan = await trainingRepo.getTodayPlan(user.id, user.timezone);
-
-  // Si el texto incluye un nombre de sesión explícito, lo usamos; si no, el plan del día
   const sessionName =
-    extractSessionName(text) ??
+    extractSessionName(normalized) ??
     todayPlan?.session_name ??
     todayPlan?.session_type ??
     "Entrenamiento";
 
-  const log = await trainingRepo.logTrainingComplete(
-    user,
-    sessionName,
-    todayPlan?.id,
-  );
-
-  // Guardamos sesión esperando RPE
+  const log = await trainingRepo.logTrainingComplete(user, sessionName, todayPlan?.id);
   setSession(jid, { flow: "rpe_capture", training_log_id: log.id });
-
-  await sendText(
-    jid,
-    `🔥 *${sessionName}* registrado como completado!\n\n¿Cómo fue el esfuerzo? Mandame un número del *1 al 10*\n_(1 = muy fácil · 10 = al límite)_`,
-  );
+  await sendText(jid, T.trainingComplete(sessionName));
 }
 
-/**
- * Maneja la respuesta de RPE (número 1-10).
- * Solo se llama cuando hay una sesión activa de tipo "rpe_capture".
- */
-export async function handleRpeResponse(
-  user: User,
-  text: string,
-): Promise<void> {
+export async function handleRpeResponse(user: User, text: string): Promise<void> {
   const jid = user.wa_chat_id!;
   const session = getSession(jid);
   if (!session || session.flow !== "rpe_capture") return;
 
-  const rpe = parseInt(text.trim(), 10);
-  if (isNaN(rpe) || rpe < 1 || rpe > 10) {
-    await sendText(
-      jid,
-      `Mandame un número entre *1 y 10* para el esfuerzo percibido 💪`,
-    );
+  const rpe = extractStandaloneNumber(text.trim().toLowerCase());
+  if (rpe === null || rpe < 1 || rpe > 10) {
+    await sendText(jid, T.trainingNeedsNumber());
     return;
   }
 
   await trainingRepo.setRpe(session.training_log_id, rpe);
   clearSession(jid);
+  await sendText(jid, T.trainingRpeSaved(rpe));
+}
 
-  const emoji = rpe >= 8 ? "🔴" : rpe >= 5 ? "🟡" : "🟢";
+export async function handleSkip(user: User): Promise<void> {
+  const jid = user.wa_chat_id!;
+  try {
+    await trainingRepo.logTrainingSkip(user.id);
+  } catch (err) {
+    logger.error("logTrainingSkip failed", { err, userId: user.id });
+  }
+  await sendText(jid, T.trainingSkip());
+}
+
+export async function handleQuery(user: User): Promise<void> {
+  const jid = user.wa_chat_id!;
+  const plan = await trainingRepo.getTodayPlan(user.id, user.timezone);
+  if (!plan || plan.session_type === "descanso") {
+    await sendText(jid, T.trainingQueryRest());
+    return;
+  }
   await sendText(
     jid,
-    `${emoji} RPE *${rpe}/10* guardado. ¡Gran trabajo hoy! 💪\n\nEsta noche te voy a preguntar cómo fue el día completo.`,
+    T.trainingQuery({
+      name: plan.session_name,
+      type: plan.session_type,
+      time: plan.approx_time,
+    }),
   );
 }
 
-/** Extrae nombre de sesión del texto: "completé piernas" → "piernas" */
-function extractSessionName(text: string): string | null {
-  const match = text
-    .trim()
-    .match(
-      /^(?:complet[eé]|listo|hice|terminé|termine|lo hice)\s+(.+)/i,
-    );
-  return match?.[1]?.trim() ?? null;
+// ──────────────────────────────────────────────────────────
+// Extrae el nombre de la sesion del texto.
+// "complete piernas" → "piernas"
+// "complete piernas hoy" → "piernas" (corta en stopword)
+// "listo el gym a full" → "el gym"
+// ──────────────────────────────────────────────────────────
+const VERB_PREFIX = /^(?:complet[ae]|terminado|terminada|terminamos|termin[ae]|finalice|finalizado|acab[eo]|ya termine|ya hice|ya entrene|hecho|cerrado|listo(?:\s+el|\s+la)?|hice|hicimos)\s+/;
+const STOPWORD_BOUNDARY = /\b(?:hoy|ayer|recien|al fin|por fin|a full|durisimo|durisima|tremendo|tremenda|completo|completa|enterito|enterita|y |con |en el|en la)\b/;
+
+function extractSessionName(normalized: string): string | null {
+  const m = normalized.match(VERB_PREFIX);
+  if (!m) return null;
+  const rest = normalized.slice(m[0].length).trim();
+  if (!rest) return null;
+  const cutoff = rest.search(STOPWORD_BOUNDARY);
+  const clean = cutoff > 0 ? rest.slice(0, cutoff).trim() : rest;
+  return clean.length > 0 ? clean.slice(0, 80) : null;
 }

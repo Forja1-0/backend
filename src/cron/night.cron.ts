@@ -3,48 +3,30 @@ import * as dailyRepo from "../repositories/daily.repo.js";
 import { startCheckin } from "../bot/handlers/checkin.handler.js";
 
 /**
- * Check-in nocturno automatizado.
- * Inicia la conversación de 3 preguntas con cada usuario activo.
+ * Check-in nocturno. Solo manda a usuarios que NO hayan respondido hoy
+ * (la query getCheckinCandidates ya filtra por daily_summaries faltante).
  *
- * Programado: todos los días a las 21:00 (Argentina).
+ * Programado: 21:00 ART todos los dias.
  */
 export async function runNightCheckin(): Promise<void> {
   logger.info("cron night checkin: starting");
 
-  let users: Awaited<ReturnType<typeof dailyRepo.getActiveUsersForCheckin>>;
+  let users: Awaited<ReturnType<typeof dailyRepo.getCheckinCandidates>>;
   try {
-    users = await dailyRepo.getActiveUsersForCheckin();
+    users = await dailyRepo.getCheckinCandidates();
   } catch (err) {
     logger.error("cron night checkin: failed to fetch users", { err });
     return;
   }
 
-  logger.info("cron night checkin: active users", { count: users.length });
+  logger.info("cron night checkin: pending users", { count: users.length });
 
   for (const u of users) {
     try {
-      // startCheckin espera un User-like, adaptamos
-      await startCheckin({
-        id: u.id,
-        name: u.name,
-        wa_chat_id: u.wa_chat_id,
-        timezone: u.timezone,
-        // Los campos opcionales no son necesarios para el check-in
-        age: null,
-        sex: null,
-        weight_kg: null,
-        height_cm: null,
-        body_fat_pct: null,
-        email: null,
-        phone_wa: null,
-        active: true,
-        onboarding_step: 7,
-        created_at: new Date(),
-        updated_at: new Date(),
-      });
+      await startCheckin(u);
       logger.info("cron night checkin: sent", { userId: u.id });
     } catch (err) {
-      logger.error("cron night checkin: failed to send", { err, userId: u.id });
+      logger.error("cron night checkin: send failed", { err, userId: u.id });
     }
   }
 

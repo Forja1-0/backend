@@ -2,56 +2,76 @@ import { query } from "../config/db.js";
 
 export interface CheckinData {
   nutrition_ok: boolean;
-  sleep: number; // 1-5
-  pain: number;  // 0-10
+  sleep: number;
+  pain: number;
+}
+
+export interface DailySummaryRow {
+  user_id: string;
+  summary_date: string;
+  total_kcal: number;
+  total_protein_g: number;
+  total_carbs_g: number;
+  total_fat_g: number;
+  kcal_adherence_pct: number | null;
+  protein_adherence_pct: number | null;
+  training_completed: boolean | null;
+  training_rpe: number | null;
+  performance_score: number | null;
 }
 
 /**
- * Upsert del daily_summary del día de hoy con los datos del check-in nocturno.
- * training_completed y training_rpe vienen del training_log si ya existe.
+ * Upsert del daily_summary del dia, combinando macros del dia +
+ * datos del checkin + RPE del training_log si existe.
+ * Devuelve la fila final con performance_score calculado.
  */
 export async function upsertDailySummary(
   userId: string,
   checkin: CheckinData,
-): Promise<void> {
-  // Obtenemos los macros del día (meal_logs confirmados)
-  const { rows: macroRows } = await query(
+): Promise<DailySummaryRow> {
+  const { rows: macroRows } = await query<{
+    total_kcal: number;
+    total_protein_g: number;
+    total_carbs_g: number;
+    total_fat_g: number;
+  }>(
     `SELECT
-       COALESCE(SUM(total_kcal),0)::INT       AS total_kcal,
-       COALESCE(SUM(total_protein_g),0)::REAL  AS total_protein_g,
-       COALESCE(SUM(total_carbs_g),0)::REAL    AS total_carbs_g,
-       COALESCE(SUM(total_fat_g),0)::REAL      AS total_fat_g
+       COALESCE(SUM(total_kcal),0)::INT         AS total_kcal,
+       COALESCE(SUM(total_protein_g),0)::REAL    AS total_protein_g,
+       COALESCE(SUM(total_carbs_g),0)::REAL      AS total_carbs_g,
+       COALESCE(SUM(total_fat_g),0)::REAL        AS total_fat_g
      FROM meal_logs
      WHERE user_id = $1
        AND logged_at::date = CURRENT_DATE
        AND confirmed = true`,
     [userId],
   );
-  const macros = macroRows[0] as any;
+  const macros = macroRows[0];
 
-  // Obtenemos target del plan activo para calcular adherencia
-  const { rows: planRows } = await query(
+  const { rows: planRows } = await query<{
+    target_kcal: number;
+    target_protein_g: number;
+  }>(
     `SELECT target_kcal, target_protein_g FROM nutrition_plans
      WHERE user_id = $1 AND is_active = true LIMIT 1`,
     [userId],
   );
-  const plan = planRows[0] as any;
+  const plan = planRows[0];
 
-  const kcal_adh = plan
+  const kcalAdh = plan
     ? Math.min((macros.total_kcal / plan.target_kcal) * 100, 150)
     : null;
-  const protein_adh = plan
+  const proteinAdh = plan
     ? Math.min((macros.total_protein_g / plan.target_protein_g) * 100, 150)
     : null;
 
-  // Training del día
-  const { rows: tRows } = await query(
+  const { rows: tRows } = await query<{ completed: boolean; rpe: number | null }>(
     `SELECT completed, rpe FROM training_logs
      WHERE user_id = $1 AND logged_at::date = CURRENT_DATE
      ORDER BY logged_at DESC LIMIT 1`,
     [userId],
   );
-  const training = tRows[0] as any;
+  const training = tRows[0];
 
   await query(
     `INSERT INTO daily_summaries
@@ -74,31 +94,91 @@ export async function upsertDailySummary(
       macros.total_protein_g,
       macros.total_carbs_g,
       macros.total_fat_g,
-      kcal_adh,
-      protein_adh,
+      kcalAdh,
+      proteinAdh,
       training?.completed ?? false,
       training?.rpe ?? null,
     ],
   );
 
-  // Calculamos el performance score via la función SQL
+  // Performance score (la fn SQL ya esta en schema.sql)
   await query(
     `UPDATE daily_summaries
      SET performance_score = calculate_performance_score($1, CURRENT_DATE)
      WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
     [userId],
   );
+
+  const { rows: final } = await query<DailySummaryRow>(
+    `SELECT user_id, summary_date::text, total_kcal, total_protein_g, total_carbs_g, total_fat_g,
+            kcal_adherence_pct, protein_adherence_pct,
+            training_completed, training_rpe, performance_score
+     FROM daily_summaries
+     WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
+    [userId],
+  );
+  return final[0];
+}
+
+/** True si el user ya tiene daily_summary hoy con respuesta de checkin (sleep != null heuristica). */
+export async function hasCheckinToday(userId: string): Promise<boolean> {
+  const { rows } = await query<{ has: boolean }>(
+    `SELECT EXISTS(
+        SELECT 1 FROM daily_summaries
+        WHERE user_id = $1
+          AND summary_date = CURRENT_DATE
+          AND training_completed IS NOT NULL
+     ) AS has`,
+    [userId],
+  );
+  return rows[0]?.has ?? false;
 }
 
 /**
- * Obtiene todos los usuarios activos con wa_chat_id para el cron nocturno.
+ * Usuarios elegibles para el checkin nocturno:
+ * activos, con WA conectado, y que NO hayan hecho el checkin hoy.
  */
-export async function getActiveUsersForCheckin(): Promise<
+export async function getCheckinCandidates(): Promise<
   { id: string; wa_chat_id: string; name: string | null; timezone: string }[]
 > {
-  const { rows } = await query(
-    `SELECT id, wa_chat_id, name, timezone FROM users
-     WHERE active = true AND wa_chat_id IS NOT NULL`,
+  const { rows } = await query<{
+    id: string;
+    wa_chat_id: string;
+    name: string | null;
+    timezone: string;
+  }>(
+    `SELECT u.id, u.wa_chat_id, u.name, u.timezone
+     FROM users u
+     WHERE u.active = true
+       AND u.wa_chat_id IS NOT NULL
+       AND u.onboarding_step >= 7
+       AND NOT EXISTS (
+         SELECT 1 FROM daily_summaries ds
+         WHERE ds.user_id = u.id
+           AND ds.summary_date = CURRENT_DATE
+           AND ds.training_completed IS NOT NULL
+       )`,
   );
-  return rows as any;
+  return rows;
+}
+
+/** Eventos recientes para enriquecer el prompt del AI summary. */
+export async function getRecentEvents(
+  userId: string,
+  days = 7,
+): Promise<{ event_type: string; description: string; occurred_at: Date }[]> {
+  const { rows } = await query<{
+    event_type: string;
+    description: string;
+    occurred_at: Date;
+  }>(
+    `SELECT event_type, description, occurred_at
+     FROM events
+     WHERE user_id = $1
+       AND occurred_at >= NOW() - ($2 || ' days')::interval
+     ORDER BY occurred_at DESC
+     LIMIT 5`,
+    [userId, days],
+  );
+  return rows;
 }
