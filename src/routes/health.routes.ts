@@ -4,7 +4,9 @@ import { getInstanceStatus } from "../services/evolution.service.js";
 
 export const healthRoutes = Router();
 
-healthRoutes.get("/health", (_req, res) => res.json({ ok: true }));
+const healthHandler = (_req: any, res: any) => res.json({ ok: true, ts: new Date().toISOString() });
+healthRoutes.get("/health", healthHandler);
+healthRoutes.get("/healthz", healthHandler);
 
 healthRoutes.get("/health/deep", async (_req, res) => {
   const out: Record<string, unknown> = { ok: true };
