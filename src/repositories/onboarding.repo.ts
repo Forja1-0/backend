@@ -4,6 +4,9 @@ import type {
   Step5Data, Step6Data, Step7Data, ConsentData,
 } from "../schemas/onboarding.schema.js";
 import { invalidateUserDict } from "../bot/parser/training-matcher.js";
+import type {
+  ParsedNutritionPlan, ParsedTrainingPlanRich,
+} from "../services/plan-pdf-parser.service.js";
 
 interface UserRow {
   id: string;
@@ -270,6 +273,211 @@ export async function saveStep7(userId: string, d: Step7Data) {
     );
     return { saved: d.meals.length };
   });
+}
+
+// ── Nutrition plan: upload PDF + parseo rico ───────────────
+// Persiste el binario + el JSON estructurado y deriva los macros target.
+// Si el parser no encontro macros, dejamos placeholder 0/0/0/0 que la UI
+// pide completar a mano en el preview.
+export interface NutritionUploadInput {
+  fileBytes: Buffer;
+  fileMime: string;
+  fileName: string;
+  parsed: ParsedNutritionPlan;
+  parserVersion: string;
+}
+
+export async function saveNutritionPlanUpload(
+  userId: string,
+  input: NutritionUploadInput,
+) {
+  const p = input.parsed;
+  // Clamps por los CHECK constraints (target_kcal BETWEEN 800 AND 8000,
+  // macros >= 0). Si el parser no encontro macros la UI los va a pedir
+  // a mano en el preview antes del PUT /step/4.
+  const clamp = (n: number | null | undefined, lo: number, hi: number) =>
+    Math.min(hi, Math.max(lo, Math.round(n ?? lo)));
+  const kcal = clamp(p.targets.kcal, 800, 8000);
+  const protein = Math.max(0, Math.round(p.targets.protein_g ?? 0));
+  const carbs = Math.max(0, Math.round(p.targets.carbs_g ?? 0));
+  const fat = Math.max(0, Math.round(p.targets.fat_g ?? 0));
+  // meal_distribution legacy: {meal: {kcal, ...}}. Mantenemos para
+  // compatibilidad con queries existentes; el detalle rico va a parsed_data.
+  const mealDist: Record<string, { kcal: number | null; protein_g: number | null; carbs_g: number | null; fat_g: number | null }> = {};
+  for (const meal of p.meal_distribution) {
+    mealDist[meal.meal_id] = {
+      kcal: meal.macros.kcal,
+      protein_g: meal.macros.protein_g,
+      carbs_g: meal.macros.carbs_g,
+      fat_g: meal.macros.fat_g,
+    };
+  }
+  return tx(async (client) => {
+    await client.query(
+      `UPDATE nutrition_plans SET is_active = false
+       WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO nutrition_plans
+         (user_id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
+          meal_distribution, nutritionist_name,
+          raw_file_bytes, raw_file_mime, raw_file_name, raw_file_size,
+          parsed_data, parsed_at, parser_version, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, true)
+       RETURNING id`,
+      [
+        userId,
+        kcal,
+        protein,
+        carbs,
+        fat,
+        Object.keys(mealDist).length ? JSON.stringify(mealDist) : null,
+        p.nutritionist_name ?? null,
+        input.fileBytes,
+        input.fileMime,
+        input.fileName,
+        input.fileBytes.length,
+        JSON.stringify(p),
+        input.parserVersion,
+      ],
+    );
+    await client.query(
+      `UPDATE users SET onboarding_step = GREATEST(onboarding_step, 4) WHERE id = $1`,
+      [userId],
+    );
+    return rows[0];
+  });
+}
+
+// ── Training plan: upload PDF + parseo rico ────────────────
+// Persiste training_plan_files (PDF + JSON rico) Y rehidrata training_plans
+// (row-per-day) para que los queries del bot sigan funcionando.
+const TRAINING_SESSION_TYPES = new Set([
+  "gym", "natacion", "bici", "corrida", "funcional",
+  "crossfit", "yoga", "movilidad", "descanso", "otro",
+]);
+
+export interface TrainingUploadInput {
+  fileBytes: Buffer;
+  fileMime: string;
+  fileName: string;
+  parsed: ParsedTrainingPlanRich;
+  parserVersion: string;
+}
+
+export async function saveTrainingPlanUpload(
+  userId: string,
+  input: TrainingUploadInput,
+) {
+  const p = input.parsed;
+  return tx(async (client) => {
+    // 1. Desactivar plan vigente (file + days)
+    await client.query(
+      `UPDATE training_plan_files SET is_active = false
+       WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
+    await client.query(
+      `UPDATE training_plans SET is_active = false
+       WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
+
+    // 2. Persistir el archivo + parsed_data rico
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO training_plan_files
+         (user_id, coach_name, raw_file_bytes, raw_file_mime, raw_file_name,
+          raw_file_size, parsed_data, parser_version, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+       RETURNING id`,
+      [
+        userId,
+        p.coach_name ?? null,
+        input.fileBytes,
+        input.fileMime,
+        input.fileName,
+        input.fileBytes.length,
+        JSON.stringify(p),
+        input.parserVersion,
+      ],
+    );
+
+    // 3. Rehidratar training_plans (row-per-day) para queries del bot
+    for (const day of p.days ?? []) {
+      const sessionType = TRAINING_SESSION_TYPES.has(day.session_type)
+        ? day.session_type
+        : "otro";
+      const exercises = (day.exercises ?? []).map((ex) => ({
+        name: ex.name,
+        aliases: ex.aliases ?? [],
+        sets: ex.sets ?? null,
+        reps: ex.reps ?? null,
+        load_kg: ex.load_kg ?? null,
+        notes: ex.notes ?? null,
+      }));
+      await client.query(
+        `INSERT INTO training_plans
+           (user_id, day_of_week, session_type, session_name, approx_time,
+            duration_min, coach_name, exercises, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
+        [
+          userId,
+          day.day_of_week,
+          sessionType,
+          day.session_name ?? null,
+          day.approx_time ?? null,
+          day.duration_min ?? null,
+          p.coach_name ?? null,
+          exercises.length ? JSON.stringify(exercises) : null,
+        ],
+      );
+    }
+
+    await client.query(
+      `UPDATE users SET onboarding_step = GREATEST(onboarding_step, 6) WHERE id = $1`,
+      [userId],
+    );
+    invalidateUserDict(userId);
+    return { file_id: rows[0].id, days: (p.days ?? []).length };
+  });
+}
+
+// Devuelve el blob crudo del plan de entrenamiento (para descargar/re-procesar).
+export async function getTrainingPlanFile(userId: string) {
+  const { rows } = await query<{
+    id: string;
+    raw_file_bytes: Buffer | null;
+    raw_file_mime: string | null;
+    raw_file_name: string | null;
+    parsed_data: ParsedTrainingPlanRich;
+    parsed_at: Date;
+  }>(
+    `SELECT id, raw_file_bytes, raw_file_mime, raw_file_name, parsed_data, parsed_at
+     FROM training_plan_files
+     WHERE user_id = $1 AND is_active = true
+     LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getNutritionPlanFile(userId: string) {
+  const { rows } = await query<{
+    id: string;
+    raw_file_bytes: Buffer | null;
+    raw_file_mime: string | null;
+    raw_file_name: string | null;
+    parsed_data: ParsedNutritionPlan | null;
+    parsed_at: Date | null;
+  }>(
+    `SELECT id, raw_file_bytes, raw_file_mime, raw_file_name, parsed_data, parsed_at
+     FROM nutrition_plans
+     WHERE user_id = $1 AND is_active = true
+     LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
 }
 
 // ── Consent → consents ────────────────────────────────────

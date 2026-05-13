@@ -3,6 +3,12 @@ import { z } from "zod";
 import { stepSchemas, consentSchema, parseTrainingPlanSchema } from "../schemas/onboarding.schema.js";
 import * as repo from "../repositories/onboarding.repo.js";
 import { parseTrainingPlan } from "../services/gemini.service.js";
+import {
+  parseNutritionPlanFile,
+  parseTrainingPlanFile,
+  PARSER_VERSION,
+} from "../services/plan-pdf-parser.service.js";
+import { planFileUpload } from "../middleware/upload.js";
 import { BadRequest, NotFound } from "../utils/errors.js";
 import { logger } from "../config/logger.js";
 
@@ -87,6 +93,79 @@ onboardingRoutes.post("/:userId/parse-training-plan", async (req, res, next) => 
     next(err);
   }
 });
+
+// POST /api/onboarding/:userId/nutrition-plan/upload
+// Multipart: field "file" con PDF/imagen del plan del nutri.
+// Persiste el binario, lo parsea con Gemini, guarda macros + JSON rico, y
+// devuelve el parseo para que el frontend muestre preview editable.
+onboardingRoutes.post(
+  "/:userId/nutrition-plan/upload",
+  planFileUpload,
+  async (req, res, next) => {
+    try {
+      const userId = z.string().uuid().parse(req.params.userId);
+      const user = await repo.getUser(userId);
+      if (!user) throw NotFound("user not found");
+      if (!req.file) throw BadRequest("falta archivo: enviar campo 'file'");
+
+      const parsed = await parseNutritionPlanFile(req.file.buffer, req.file.mimetype);
+      const saved = await repo.saveNutritionPlanUpload(userId, {
+        fileBytes: req.file.buffer,
+        fileMime: req.file.mimetype,
+        fileName: req.file.originalname,
+        parsed,
+        parserVersion: PARSER_VERSION,
+      });
+
+      logger.info("nutrition plan uploaded", {
+        userId,
+        bytes: req.file.size,
+        meals: parsed.meal_distribution.length,
+        kcal: parsed.targets.kcal,
+      });
+      res.json({ ok: true, id: saved.id, parsed });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /api/onboarding/:userId/training-plan/upload
+// Multipart: field "file" con PDF/imagen del plan del coach.
+// Persiste el binario, parsea con Gemini, rehidrata training_plans (row-per-day)
+// y devuelve el JSON rico al frontend.
+onboardingRoutes.post(
+  "/:userId/training-plan/upload",
+  planFileUpload,
+  async (req, res, next) => {
+    try {
+      const userId = z.string().uuid().parse(req.params.userId);
+      const user = await repo.getUser(userId);
+      if (!user) throw NotFound("user not found");
+      if (!req.file) throw BadRequest("falta archivo: enviar campo 'file'");
+
+      const parsed = await parseTrainingPlanFile(req.file.buffer, req.file.mimetype);
+      const saved = await repo.saveTrainingPlanUpload(userId, {
+        fileBytes: req.file.buffer,
+        fileMime: req.file.mimetype,
+        fileName: req.file.originalname,
+        parsed,
+        parserVersion: PARSER_VERSION,
+      });
+
+      logger.info("training plan uploaded", {
+        userId,
+        bytes: req.file.size,
+        days: saved.days,
+        exercises: parsed.days.reduce((acc, d) => acc + d.exercises.length, 0),
+        protocols: parsed.rehab_protocols.length,
+      });
+      res.json({ ok: true, id: saved.file_id, parsed });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // POST /api/onboarding/:userId/consent
 onboardingRoutes.post("/:userId/consent", async (req, res, next) => {

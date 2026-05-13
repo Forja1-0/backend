@@ -90,11 +90,43 @@ CREATE TABLE nutrition_plans (
     -- {desayuno: {kcal: 500}, almuerzo: {kcal: 800}, ...}
     nutritionist_name   TEXT,
     plan_file_url       TEXT,
+    -- PDF original + parseo rico (migration 003)
+    raw_file_bytes      BYTEA,
+    raw_file_mime       TEXT,
+    raw_file_name       TEXT,
+    raw_file_size       INT,
+    parsed_data         JSONB,
+    parsed_at           TIMESTAMPTZ,
+    parser_version      TEXT,
     is_active           BOOLEAN NOT NULL DEFAULT true,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE UNIQUE INDEX idx_nutrition_one_active ON nutrition_plans (user_id) WHERE is_active = true;
+
+-- ============================================================
+-- 4b. TRAINING_PLAN_FILES — PDF original + parseo rico
+-- Complementa training_plans (row-per-day, queries del bot)
+-- ============================================================
+CREATE TABLE training_plan_files (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    coach_name          TEXT,
+    raw_file_bytes      BYTEA,
+    raw_file_mime       TEXT,
+    raw_file_name       TEXT,
+    raw_file_size       INT,
+    parsed_data         JSONB NOT NULL,
+    parser_version      TEXT,
+    is_active           BOOLEAN NOT NULL DEFAULT true,
+    parsed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX idx_training_plan_files_one_active
+  ON training_plan_files (user_id) WHERE is_active = true;
+CREATE INDEX idx_training_plan_files_parsed_gin
+  ON training_plan_files USING GIN (parsed_data);
 
 -- ============================================================
 -- 5. DIETARY_RESTRICTIONS — 1:1 con users
