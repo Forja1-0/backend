@@ -11,7 +11,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 
-export const PARSER_VERSION = "pdf-gemini-2.5-flash@1";
+export const PARSER_VERSION = "pdf-gemini-2.5-flash@2";
 
 const SUPPORTED_MIMES = new Set([
   "application/pdf",
@@ -316,6 +316,9 @@ REGLAS:
 - is_rehab: true si el ejercicio esta marcado como REHAB o es claramente rehabilitacion (TKE, isometricos, exc. de gemelo, etc.).
 - rationale: el "¿por que rehab aca?" o cualquier explicacion del dia. Copiar fielmente.
 - Si un dia es descanso, exercises: [].
+- Si un dia tiene MAS DE UNA sesion (ej. natacion AM + gym PM, doble turno, fuerza + cardio en distintos horarios), crear UNA ENTRADA SEPARADA en days[] por cada sesion, con el MISMO day_of_week. El session_type identifica cual es cual. Ejemplo: martes con nado 7:00-8:30 AM + Piernas A 12:00-14:00 -> dos entries en days[], ambos day_of_week=2, uno {"session_type":"natacion","approx_time":"07:00",...} y otro {"session_type":"gym","approx_time":"12:00",...}.
+- Para sesiones de natacion/bici/corrida que aparezcan en days[]: session_name = label corto del bloque (ej. "Nado AM - 1400-1600m crol + drills"), exercises = [] (el detalle rico va a swim_plan), duration_min y approx_time si el plan los da.
+- Revisa el cuadro "Estructura semanal" o equivalente: si tiene columnas separadas para distintas disciplinas (Natacion / Gimnasio / Bici / etc.), CADA celda no vacia es una sesion distinta y debe aparecer como entry propio en days[].
 - approx_time: si dice "12:00-14:00" usar "12:00".
 - general_notes: copia textual de cualquier explicacion cientifica, citas (Rio et al. 2015), o advertencia.
 - Si no podes inferir un campo, null. NUNCA inventes datos.`;
