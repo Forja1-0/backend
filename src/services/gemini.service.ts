@@ -91,6 +91,98 @@ export async function pingGemini(): Promise<boolean> {
 }
 
 // ════════════════════════════════════════════════════════════
+// PARSE DE PLAN DE ENTRENAMIENTO (one-shot en onboarding)
+// ════════════════════════════════════════════════════════════
+export interface ParsedExercise {
+  name: string;
+  aliases: string[];
+  sets: number | null;
+  reps: string | null;
+  load_kg: number | null;
+  notes: string | null;
+}
+
+export interface ParsedTrainingDay {
+  day_of_week: number;        // 0 = domingo
+  session_type: string;       // gym | natacion | bici | corrida | funcional | crossfit | yoga | descanso | otro
+  session_name: string | null;
+  duration_min: number | null;
+  exercises: ParsedExercise[];
+}
+
+export interface ParsedTrainingPlan {
+  coach_name: string | null;
+  days: ParsedTrainingDay[];
+}
+
+const MAX_PLAN_INPUT_CHARS = 8000;
+
+export async function parseTrainingPlan(rawText: string): Promise<ParsedTrainingPlan | null> {
+  const text = rawText.slice(0, MAX_PLAN_INPUT_CHARS).trim();
+  if (text.length < 10) return null;
+
+  const prompt = `Sos un preparador fisico argentino. Te paso el plan de entrenamiento de un atleta tal como se lo paso su coach. Tu trabajo es estructurarlo en JSON.
+
+PLAN:
+"""
+${text}
+"""
+
+Devolve SOLO JSON valido (sin texto antes ni despues, sin markdown fences), con este formato:
+
+{
+  "coach_name": "string o null si no se menciona",
+  "days": [
+    {
+      "day_of_week": 0,
+      "session_type": "gym",
+      "session_name": "Piernas A o null",
+      "duration_min": 60,
+      "exercises": [
+        {
+          "name": "Sentadilla",
+          "aliases": ["sentadillas", "back squat", "squat"],
+          "sets": 4,
+          "reps": "8-10",
+          "load_kg": null,
+          "notes": null
+        }
+      ]
+    }
+  ]
+}
+
+REGLAS:
+- day_of_week: 0=domingo, 1=lunes, 2=martes, 3=miercoles, 4=jueves, 5=viernes, 6=sabado.
+- session_type: usa SOLO uno de: gym, natacion, bici, corrida, funcional, crossfit, yoga, movilidad, descanso, otro.
+- aliases: variantes en argentino que el atleta pueda usar al hablar (slang, abreviaciones, ingles, sinonimos). Minimo 1 alias, idealmente 2-3.
+- sets/reps/load_kg/notes: usa null si no se menciona en el plan.
+- Si un dia es descanso, dejar exercises: [].
+- Si el plan no especifica que dia de la semana es cada sesion, asume Lunes/Miercoles/Viernes para 3 dias, Lunes/Martes/Jueves/Viernes para 4 dias, etc.
+- Si no podes entender nada del plan, devolve {"coach_name": null, "days": []}.`;
+
+  try {
+    const raw = await generateText(prompt);
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      logger.warn("gemini parseTrainingPlan: no JSON in response", { sample: raw.slice(0, 200) });
+      return null;
+    }
+    const parsed = JSON.parse(jsonMatch[0]) as ParsedTrainingPlan;
+    if (!Array.isArray(parsed.days)) return null;
+    return parsed;
+  } catch (err) {
+    logger.error("gemini parseTrainingPlan failed", {
+      message: (err as any)?.message,
+      status: (err as any)?.status,
+      statusText: (err as any)?.statusText,
+      errorDetails: (err as any)?.errorDetails,
+    });
+    return null;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 // RESUMEN NOCTURNO (mensaje warm/personalizado)
 // ════════════════════════════════════════════════════════════
 export interface NightlySummaryInput {

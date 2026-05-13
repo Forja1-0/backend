@@ -81,18 +81,34 @@ export const step5Schema = z.object({
 });
 
 // ── Step 6: Plan de entrenamiento semanal → training_plans ──
+const exerciseSchema = z.object({
+  name: z.string().min(1).max(100),
+  aliases: z.array(z.string().min(1).max(50)).max(10).default([]),
+  sets: z.number().int().min(1).max(30).nullable().optional(),
+  reps: z.string().max(30).nullable().optional(),
+  load_kg: z.number().min(0).max(1000).nullable().optional(),
+  notes: z.string().max(500).nullable().optional(),
+});
+
 const trainingDaySchema = z.object({
   day_of_week: z.number().int().min(0).max(6), // 0=domingo
   session_type: z.string().min(1).max(50),
   session_name: z.string().max(200).nullable().optional(),
   approx_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).nullable().optional(),
   duration_min: z.number().int().min(1).max(480).nullable().optional(),
+  exercises: z.array(exerciseSchema).max(30).nullable().optional(),
 });
 
 export const step6Schema = z.object({
   training_days: z.array(trainingDaySchema).min(1).max(14),
   coach_name: z.string().max(200).nullable().optional(),
 });
+
+// ── Parser de plan: input es el texto crudo del coach ──
+export const parseTrainingPlanSchema = z.object({
+  text: z.string().min(10).max(8000),
+});
+export type ParseTrainingPlanInput = z.infer<typeof parseTrainingPlanSchema>;
 
 // ── Step 7: Comidas frecuentes → frequent_meals ───────────
 const ingredientSchema = z.object({

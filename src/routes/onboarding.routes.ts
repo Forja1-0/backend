@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
-import { stepSchemas, consentSchema } from "../schemas/onboarding.schema.js";
+import { stepSchemas, consentSchema, parseTrainingPlanSchema } from "../schemas/onboarding.schema.js";
 import * as repo from "../repositories/onboarding.repo.js";
+import { parseTrainingPlan } from "../services/gemini.service.js";
 import { BadRequest, NotFound } from "../utils/errors.js";
 import { logger } from "../config/logger.js";
 
@@ -54,6 +55,34 @@ onboardingRoutes.put("/:userId/step/:n", async (req, res, next) => {
 
     logger.info("onboarding step saved", { userId, step: stepNum });
     res.json({ ok: true, step: stepNum, result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/onboarding/:userId/parse-training-plan
+// Body: { text: "texto libre del plan que paso el coach" }
+// Devuelve estructura parseada para que el frontend muestre preview.
+// El usuario edita lo necesario y despues hace PUT /step/6 con la estructura final.
+onboardingRoutes.post("/:userId/parse-training-plan", async (req, res, next) => {
+  try {
+    const userId = z.string().uuid().parse(req.params.userId);
+    const user = await repo.getUser(userId);
+    if (!user) throw NotFound("user not found");
+
+    const { text } = parseTrainingPlanSchema.parse(req.body);
+    const parsed = await parseTrainingPlan(text);
+
+    if (!parsed) {
+      throw BadRequest("no pude interpretar el plan — revisa el texto o cargalo a mano");
+    }
+
+    logger.info("training plan parsed", {
+      userId,
+      days: parsed.days.length,
+      totalExercises: parsed.days.reduce((acc, d) => acc + d.exercises.length, 0),
+    });
+    res.json({ ok: true, parsed });
   } catch (err) {
     next(err);
   }

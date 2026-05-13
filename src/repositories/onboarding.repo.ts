@@ -209,8 +209,8 @@ export async function saveStep6(userId: string, d: Step6Data) {
       await client.query(
         `INSERT INTO training_plans
            (user_id, day_of_week, session_type, session_name, approx_time,
-            duration_min, coach_name, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+            duration_min, coach_name, exercises, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
         [
           userId,
           day.day_of_week,
@@ -219,6 +219,7 @@ export async function saveStep6(userId: string, d: Step6Data) {
           day.approx_time ?? null,
           day.duration_min ?? null,
           d.coach_name ?? null,
+          day.exercises ? JSON.stringify(day.exercises) : null,
         ],
       );
     }
