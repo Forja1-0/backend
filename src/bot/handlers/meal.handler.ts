@@ -4,6 +4,7 @@ import * as mealRepo from "../../repositories/meal.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
 import { sendText } from "../../services/evolution.service.js";
 import { setSession, clearSession, type PendingMeal } from "../session.store.js";
+import { classify } from "../parser/intent-classifier.js";
 import * as T from "../personality/templates.js";
 import { logger } from "../../config/logger.js";
 
@@ -29,6 +30,17 @@ export async function handleMealLog(
   } catch (err) {
     logger.error("meal parser failed", { err, rawText });
     await sendText(jid, T.mealFailed());
+    return true;
+  }
+
+  if (result.source === "needs_clarification") {
+    setSession(jid, {
+      flow: "meal_clarify",
+      raw_original: rawText,
+      normalized_original: normalized,
+      food_hint: result.food_hint ?? normalized,
+    });
+    await sendText(jid, T.mealClarify(result.food_hint ?? normalized));
     return true;
   }
 
@@ -82,6 +94,47 @@ export async function handleMealConfirm(
     source: "descriptive",
   });
   await sendText(jid, T.mealRegistered(pending.parsed_items, pending.totals, pending.is_estimate));
+}
+
+/**
+ * Procesa la respuesta del usuario al pedido de aclaracion (flow meal_clarify).
+ * Combina el texto original + la nueva info y re-parsea SIN volver a preguntar
+ * (skipClarification). Si quick/alias resuelven → save directo, sin AI.
+ * Si sigue sin cantidad → AI estima y avisamos explicitamente que es estimacion.
+ */
+export async function handleMealClarify(
+  user: User,
+  newText: string,
+  session: { raw_original: string; normalized_original: string; food_hint: string },
+): Promise<void> {
+  const jid = user.wa_chat_id!;
+  clearSession(jid);
+
+  const combinedRaw = `${session.raw_original} ${newText}`.trim();
+  const combinedNormalized = classify(combinedRaw).normalized;
+
+  let result: ParseResult;
+  try {
+    result = await parseMeal(user.id, combinedNormalized, combinedRaw, { skipClarification: true });
+  } catch (err) {
+    logger.error("meal parser failed on clarify", { err, combinedRaw });
+    await sendText(jid, T.mealFailed());
+    return;
+  }
+
+  if (result.source === "none" || result.items.length === 0) {
+    await sendText(jid, T.mealFailed());
+    return;
+  }
+
+  await persistMeal(user, combinedRaw, result);
+
+  // Si la cantidad la estimo la AI (no vino del usuario), avisamos explicitamente.
+  const wasEstimated = result.source === "ai" || result.is_estimate;
+  const message = wasEstimated
+    ? T.mealRegisteredEstimated(result.items, result.totals)
+    : T.mealRegistered(result.items, result.totals, result.is_estimate);
+  await sendText(jid, message);
 }
 
 async function persistMeal(user: User, rawText: string, result: ParseResult): Promise<void> {

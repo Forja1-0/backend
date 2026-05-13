@@ -23,9 +23,11 @@ export interface ParseResult {
   is_estimate: boolean;
   /** Confianza global. >=0.7 → guardar directo. <0.7 → pedir confirmacion. */
   confidence: number;
-  source: "alias" | "quick" | "descriptive" | "ai" | "none";
+  source: "alias" | "quick" | "descriptive" | "ai" | "none" | "needs_clarification";
   /** Si match a frequent_meal, su id (para bumpear use_count). */
   frequent_meal_id?: string;
+  /** Texto descriptivo de la comida mencionada (sin verbo) para usar en la pregunta de aclaracion. */
+  food_hint?: string;
 }
 
 /**
@@ -41,6 +43,7 @@ export async function parseMeal(
   userId: string,
   normalized: string,
   rawText: string,
+  opts: { skipClarification?: boolean } = {},
 ): Promise<ParseResult> {
   // ── 1) ALIAS ──────────────────────────────────────────────
   const alias = await tryAlias(userId, normalized);
@@ -50,9 +53,37 @@ export async function parseMeal(
   const quick = await tryQuick(normalized);
   if (quick && quick.items.length > 0) return quick;
 
+  // ── 2.5) CLARIFICACION — si no hay cantidad alguna, pedimos detalles
+  //         antes de gastar AI. El segundo intento (clarify handler) pasa
+  //         skipClarification=true para caer a AI si sigue vago.
+  if (!opts.skipClarification && !/\d/.test(normalized)) {
+    return {
+      items: [],
+      totals: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+      is_estimate: false,
+      confidence: 0,
+      source: "needs_clarification",
+      food_hint: extractFoodHint(normalized),
+    };
+  }
+
   // ── 3) AI ─────────────────────────────────────────────────
   const ai = await tryAi(rawText);
   return ai;
+}
+
+// ────────────────────────────────────────────────────────────
+// Extract food hint — strip verb prefix to use in clarification prompt.
+//   "comi pescado"           → "pescado"
+//   "almorce pollo con arroz"→ "pollo con arroz"
+//   "tomé un licuado"        → "un licuado"
+// ────────────────────────────────────────────────────────────
+const MEAL_VERB_PREFIX =
+  /^(?:me\s+)?(?:comi|come|comer|cene|ceno|cenar|desayune|desayuno|desayunar|almorce|almorzo|almorzar|merende|merendar|tome|tomo|tomar|probé|probe|probar)\s+/;
+
+function extractFoodHint(normalized: string): string {
+  const stripped = normalized.replace(MEAL_VERB_PREFIX, "").trim();
+  return stripped || normalized;
 }
 
 // ────────────────────────────────────────────────────────────

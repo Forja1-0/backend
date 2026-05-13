@@ -162,6 +162,34 @@ export function mealFailed(): string {
   return "Se me complicó procesar esa comida. ¿La podés decir de otra forma o con cantidades?";
 }
 
+export function mealClarify(foodHint: string): string {
+  return pick([
+    `Dale. ¿Cuántos gramos de *${foodHint}*? ¿Qué tipo fue? ¿Comiste algo más?`,
+    `Necesito un toque más de info. ¿Cuántos gramos de *${foodHint}* y qué tipo? Si comiste algo más, decímelo también.`,
+    `Para registrarlo bien: ¿qué cantidad (en gramos) de *${foodHint}*, qué tipo, y si lo acompañaste con algo?`,
+  ]);
+}
+
+export function mealRegisteredEstimated(
+  items: MealSummaryItem[],
+  totals: { kcal: number; protein: number; carbs: number; fat: number },
+): string {
+  const lines = ["✅ *Registrado* (con cantidad estimada).\n"];
+  for (const it of items) {
+    const nm = it.matched_db_name ?? it.name;
+    const qty = it.grams > 0 ? `~${it.grams}g de ` : "";
+    lines.push(`• ${qty}${nm} (${it.kcal} kcal)`);
+  }
+  lines.push(
+    `\n*Total estimado:* ${Math.round(totals.kcal)} kcal · ` +
+    `P ${Math.round(totals.protein)}g · ` +
+    `C ${Math.round(totals.carbs)}g · ` +
+    `G ${Math.round(totals.fat)}g`,
+  );
+  lines.push("\n_Si la cantidad no es precisa, escribime *corregir*._");
+  return lines.join("\n");
+}
+
 // ════════════════════════════════════════════════════════════
 // QUERIES
 // ════════════════════════════════════════════════════════════

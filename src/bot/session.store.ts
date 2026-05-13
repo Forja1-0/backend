@@ -29,6 +29,7 @@ export type SessionState =
   | { flow: "checkin_sleep"; step: 2; nutrition_ok: boolean }
   | { flow: "checkin_pain"; step: 3; nutrition_ok: boolean; sleep: number }
   | { flow: "meal_confirm"; meal: PendingMeal }
+  | { flow: "meal_clarify"; raw_original: string; normalized_original: string; food_hint: string }
   | { flow: "baja_confirm" };
 
 const store = new Map<string, SessionState>();
