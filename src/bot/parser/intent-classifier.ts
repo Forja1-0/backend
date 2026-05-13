@@ -110,10 +110,9 @@ export function classify(input: string): Classification {
   if (fuzzyTokenMatch(tokens, P.KEYWORDS_ILLNESS)) {
     return { ...base, intent: "disruption_illness", confidence: 0.85 };
   }
-  // Desliz necesita match de phrase, no solo token
-  if (P.KEYWORDS_DESLIZ.some((p) => normalized.includes(p))) {
-    return { ...base, intent: "disruption_desliz", confidence: 0.75 };
-  }
+  // Desliz: contextual
+  const deslizResult = classifyDesliz(normalized, features);
+  if (deslizResult) return { ...base, ...deslizResult };
 
   // ── 8. TRAINING ──────────────────────────────────────────
   // a) Completion fuerte (verbos claros)
@@ -178,6 +177,70 @@ export function classify(input: string): Classification {
 
   // ── 12. FALLBACK ─────────────────────────────────────────
   return { ...base, intent: "unknown", confidence: 0 };
+}
+
+/**
+ * Decide si un mensaje es desliz usando contexto, no solo keywords.
+ *
+ *   STRONG (atracon, me pase, fui a comer afuera...) → desliz seguro
+ *   TRIGGER (vino, pizza, helado...) → ambiguo:
+ *     - 2+ triggers distintos                 → desliz (varias indulgencias)
+ *     - 1 trigger + sin meal_verb/quantity    → desliz (mensaje stand-alone)
+ *     - 1 trigger + meal_verb + healthy food  → NO desliz, deja pasar a meal_log
+ *     - 1 trigger con cantidad >=3            → desliz (mucha cantidad)
+ *
+ * Devuelve { intent, confidence } o null si no es desliz.
+ */
+function classifyDesliz(
+  normalized: string,
+  features: Features,
+): { intent: Intent; confidence: number } | null {
+  // STRONG: matchea frase tal cual
+  if (P.KEYWORDS_DESLIZ_STRONG.some((p) => normalized.includes(p))) {
+    return { intent: "disruption_desliz", confidence: 0.9 };
+  }
+
+  // TRIGGER: alcohol + junk
+  const alcoholHits = P.KEYWORDS_DESLIZ_TRIGGER_ALCOHOL.filter((kw) =>
+    new RegExp(`\\b${kw}\\b`).test(normalized),
+  );
+  const junkHits = P.KEYWORDS_DESLIZ_TRIGGER_JUNK.filter((kw) =>
+    new RegExp(`\\b${kw}\\b`).test(normalized),
+  );
+  const totalTriggers = alcoholHits.length + junkHits.length;
+  if (totalTriggers === 0) return null;
+
+  // 2+ triggers distintos → desliz seguro
+  if (totalTriggers >= 2) return { intent: "disruption_desliz", confidence: 0.85 };
+
+  // Cantidad alta con el trigger (ej: "6 birras")
+  const highQty = /\b([3-9]|\d{2,})\s*(birras?|cervezas?|copas?|tragos?|vasos?|pintas?)\b/.test(normalized);
+  if (highQty) return { intent: "disruption_desliz", confidence: 0.85 };
+
+  // Junk food: casi siempre es desliz. Solo excluimos si va con comida sana
+  // explicita en el mismo mensaje (ej: "comi ensalada de pollo con papas fritas").
+  if (junkHits.length >= 1) {
+    const hasHealthyCompanion =
+      features.hasFoodHint &&
+      /\b(ensalada|verduras|vegetales|pollo|pescado|atun|huevos?|arroz integral|avena|frutas?|yogur|queso magro)\b/.test(normalized);
+    if (!hasHealthyCompanion) {
+      return { intent: "disruption_desliz", confidence: 0.8 };
+    }
+    return null;
+  }
+
+  // Alcohol solo: contexto manda
+  // 1 trigger + meal_verb + comida sana ("comi pollo con 1 copa de vino") → NO desliz
+  if (features.hasMealVerb && features.hasFoodHint && features.hasQuantity) {
+    return null;
+  }
+
+  // 1 trigger solo (sin meal_verb/food) → probablemente desliz stand-alone
+  if (!features.hasMealVerb && !features.hasFoodHint) {
+    return { intent: "disruption_desliz", confidence: 0.75 };
+  }
+
+  return null;
 }
 
 function extractFeatures(normalized: string, tokens: string[]): Features {

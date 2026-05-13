@@ -215,17 +215,39 @@ export const KEYWORDS_ILLNESS = [
   "me siento mal", "estoy bajoneado", "estoy bajoneada",
 ] as const;
 
-// "Desliz" — indulgencia consciente
-export const KEYWORDS_DESLIZ = [
-  "me mande un", "me mande una", "me clave un", "me clave una",
-  "me comi un", "me comi una",
-  "fiaca", "atracon", "atracón", "me pase", "me re pase",
-  "asadito", "asadazo", "asado con amigos",
-  "birra", "birras", "cerveza", "cervezas", "fernet", "vino",
-  "tomamos algo", "salimos a tomar", "alcohol", "trago", "tragos",
-  "pizza con", "comimos pizza", "helado de", "fui a comer", "salida a comer",
-  "festejo", "cumple", "cumpleanos", "casamiento", "evento",
+// "Desliz" — separado en STRONG (siempre cuenta) y TRIGGER (necesita contexto)
+//
+// STRONG: frases explicitas de indulgencia. Si aparece, es desliz si o si.
+export const KEYWORDS_DESLIZ_STRONG = [
+  "atracon", "atracón", "me pase", "me re pase", "fiaca",
   "no me cuide", "me descuide", "se me fue de las manos",
+  "tomamos algo", "salimos a tomar", "salida a comer",
+  "fui a comer afuera", "fuimos a comer", "salimos a comer",
+  "festejo", "cumple", "cumpleanos", "casamiento", "evento",
+  "asadazo", "asado con amigos", "asadito con",
+  "se nos fue de las manos", "me clave todo",
+] as const;
+
+// TRIGGER: palabras de alcohol/chatarra. Son ambiguas:
+//   - "me tome 1 copa de vino con la cena" → NO desliz (meal con nota)
+//   - "tome 6 birras" → SI desliz (cantidad alta)
+//   - "comi pizza" sin contexto saludable → SI desliz
+// El classifier decide en base a cantidad + presencia de meal_log signals.
+export const KEYWORDS_DESLIZ_TRIGGER_ALCOHOL = [
+  "birra", "birras", "cerveza", "cervezas", "fernet",
+  "vino", "vinos", "champagne", "champan", "espumante",
+  "gin", "ron", "vodka", "whisky", "whiskey", "tequila",
+  "trago", "tragos", "alcohol", "copa", "copas",
+] as const;
+
+export const KEYWORDS_DESLIZ_TRIGGER_JUNK = [
+  "pizza", "hamburguesa", "hamburguesas", "burguer",
+  "mcdonald", "mcdo", "burger king",
+  "alfajor", "alfajores",
+  "torta", "facturas", "factura", "donut", "donuts",
+  "helado", "helados",
+  "papas fritas", "papitas",
+  "choripan", "chorip[áa]n", "panchos", "pancho",
 ] as const;
 
 // ════════════════════════════════════════════════════════════

@@ -271,7 +271,7 @@ async function tryQuick(normalized: string): Promise<ParseResult | null> {
   for (let i = 0; i < tokens.length; i++) {
     if (consumedTokens.has(i)) continue;
     const t = tokens[i].toLowerCase();
-    if (CONJUNCTIONS.has(t) || STOPWORDS_IN_FOOD.has(t)) continue;
+    if (CONJUNCTIONS.has(t) || STOPWORDS_IN_FOOD.has(t) || FOOD_NOISE.has(t)) continue;
     if (!/^[a-záéíóúñ]/i.test(t)) continue;
     const span = collectFoodSpan(tokens, i, consumedTokens, "forward");
     if (span && span.text.length >= 3) {
