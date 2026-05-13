@@ -6,12 +6,12 @@ import type { DailySummaryRow } from "../repositories/daily.repo.js";
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 
 const flash = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash",
+  model: "gemini-2.0-flash",
   generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
 });
 
 const flashWarm = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash",
+  model: "gemini-2.0-flash",
   generationConfig: { temperature: 0.9, maxOutputTokens: 600 },
 });
 
