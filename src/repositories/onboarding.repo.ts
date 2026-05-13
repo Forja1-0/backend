@@ -3,6 +3,7 @@ import type {
   Step1Data, Step2Data, Step3Data, Step4Data,
   Step5Data, Step6Data, Step7Data, ConsentData,
 } from "../schemas/onboarding.schema.js";
+import { invalidateUserDict } from "../bot/parser/training-matcher.js";
 
 interface UserRow {
   id: string;
@@ -227,6 +228,7 @@ export async function saveStep6(userId: string, d: Step6Data) {
       `UPDATE users SET onboarding_step = GREATEST(onboarding_step, 6) WHERE id = $1`,
       [userId],
     );
+    invalidateUserDict(userId);
     return { saved: d.training_days.length };
   });
 }

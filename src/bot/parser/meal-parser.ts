@@ -1,6 +1,7 @@
 import * as foodRepo from "../../repositories/food.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
 import { parseMealText } from "../../services/gemini.service.js";
+import { canUseAi, recordAiUse } from "../../services/ai-budget.service.js";
 import { logger } from "../../config/logger.js";
 
 /** Threshold de similarity para confiar en el match SARA — bajo de esto NO pisa macros AI. */
@@ -68,7 +69,7 @@ export async function parseMeal(
   }
 
   // ── 3) AI ─────────────────────────────────────────────────
-  const ai = await tryAi(rawText);
+  const ai = await tryAi(rawText, userId);
   return ai;
 }
 
@@ -394,7 +395,18 @@ function collectFoodSpan(
 // ────────────────────────────────────────────────────────────
 // 3) AI fallback
 // ────────────────────────────────────────────────────────────
-async function tryAi(rawText: string): Promise<ParseResult> {
+async function tryAi(rawText: string, userId: string): Promise<ParseResult> {
+  if (!canUseAi(userId)) {
+    logger.warn("ai budget exceeded — skipping parseMealText", { userId });
+    return {
+      items: [],
+      totals: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+      is_estimate: false,
+      confidence: 0,
+      source: "none",
+    };
+  }
+  recordAiUse(userId);
   const parsed = await parseMealText(rawText);
   if (!parsed || parsed.length === 0) {
     return {

@@ -81,6 +81,34 @@ export async function setRpe(
 }
 
 /**
+ * Trae TODO el plan semanal del usuario con exercises[].
+ * Usado por el matcher de "hice X" para construir el diccionario por user.
+ */
+export async function getAllActivePlans(userId: string): Promise<
+  Array<{
+    id: string;
+    day_of_week: number;
+    session_type: string;
+    session_name: string | null;
+    exercises: Array<{ name: string; aliases: string[] }> | null;
+  }>
+> {
+  const { rows } = await query<{
+    id: string;
+    day_of_week: number;
+    session_type: string;
+    session_name: string | null;
+    exercises: Array<{ name: string; aliases: string[] }> | null;
+  }>(
+    `SELECT id, day_of_week, session_type, session_name, exercises
+     FROM training_plans
+     WHERE user_id = $1 AND is_active = true`,
+    [userId],
+  );
+  return rows;
+}
+
+/**
  * Obtiene todos los usuarios activos con wa_chat_id y su plan de hoy,
  * para el recordatorio matutino (cron 6AM).
  */

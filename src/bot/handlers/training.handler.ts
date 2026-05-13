@@ -4,6 +4,7 @@ import { getSession, setSession, clearSession } from "../session.store.js";
 import { sendText } from "../../services/evolution.service.js";
 import * as T from "../personality/templates.js";
 import { extractStandaloneNumber } from "../parser/normalize.js";
+import { matchTraining } from "../parser/training-matcher.js";
 import { logger } from "../../config/logger.js";
 
 /**
@@ -17,15 +18,49 @@ export async function handleComplete(user: User, normalized: string): Promise<vo
   const jid = user.wa_chat_id!;
 
   const todayPlan = await trainingRepo.getTodayPlan(user.id, user.timezone);
-  const sessionName =
-    extractSessionName(normalized) ??
-    todayPlan?.session_name ??
-    todayPlan?.session_type ??
-    "Entrenamiento";
+  const todayDow = computeTodayDow(user.timezone);
 
-  const log = await trainingRepo.logTrainingComplete(user, sessionName, todayPlan?.id);
+  // Intentamos matchear contra el plan completo del usuario (exercise/alias/session).
+  // Si el matcher engancha un dia distinto a hoy, lo registramos como swap.
+  let matchedPlanId: string | undefined = todayPlan?.id;
+  let sessionName: string;
+  let dayOffset = 0;
+
+  const match = await matchTraining(user.id, normalized, todayDow);
+  if (match) {
+    matchedPlanId = match.plan_id;
+    sessionName = match.session_name ?? match.session_type;
+    dayOffset = match.day_offset;
+  } else {
+    sessionName =
+      extractSessionName(normalized) ??
+      todayPlan?.session_name ??
+      todayPlan?.session_type ??
+      "Entrenamiento";
+  }
+
+  const log = await trainingRepo.logTrainingComplete(user, sessionName, matchedPlanId);
   setSession(jid, { flow: "rpe_capture", training_log_id: log.id });
-  await sendText(jid, T.trainingComplete(sessionName));
+
+  if (match && !match.is_today && todayPlan && todayPlan.session_type !== "descanso") {
+    await sendText(
+      jid,
+      T.trainingDaySwapped(sessionName, todayPlan.session_name ?? todayPlan.session_type),
+    );
+  } else {
+    await sendText(jid, T.trainingComplete(sessionName));
+  }
+  logger.debug("training match", { userId: user.id, match, dayOffset });
+}
+
+function computeTodayDow(timezone: string | null | undefined): number {
+  const tz = timezone || "America/Argentina/Buenos_Aires";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+  }).format(new Date());
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[parts] ?? new Date().getDay();
 }
 
 export async function handleRpeResponse(user: User, text: string): Promise<void> {

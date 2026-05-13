@@ -1,6 +1,7 @@
 import type { User } from "../types/user.types.js";
 import { getSession } from "./session.store.js";
 import { classify } from "./parser/intent-classifier.js";
+import { matchTraining } from "./parser/training-matcher.js";
 import { logger } from "../config/logger.js";
 
 import { handleComplete, handleRpeResponse, handleSkip, handleQuery as handleTrainingQuery } from "./handlers/training.handler.js";
@@ -48,15 +49,37 @@ export async function routeMessage(user: User, rawText: string | null): Promise<
     return;
   }
 
-  // ── 3. CONFIANZA MEDIA — intentamos meal (es el caso mas frecuente
+  // ── 3. MATCHER DE TRAINING — busca en el plan del user si hay
+  //      "hice/termine X" donde X es un ejercicio/sesion del plan
+  //      que el classifier no conoce ("hice pecfly"). ─────────────────
+  if (HAS_COMPLETION_VERB.test(c.normalized)) {
+    const todayDow = todayDowFor(user.timezone);
+    const match = await matchTraining(user.id, c.normalized, todayDow);
+    if (match) {
+      logger.debug("training matcher hit on weak intent", { jid, match });
+      await dispatchByIntent(user, rawText, c.normalized, "training_complete");
+      return;
+    }
+  }
+
+  // ── 4. CONFIANZA MEDIA — intentamos meal (es el caso mas frecuente
   //                         que pasa por AI fallback) ──────────────────
   if (c.intent === "meal_log" || (c.intent === "unknown" && c.tokens.length >= 3)) {
     const handled = await handleMealLog(user, rawText, c.normalized);
     if (handled) return;
   }
 
-  // ── 4. FALLBACK ──────────────────────────────────────────
+  // ── 5. FALLBACK ──────────────────────────────────────────
   await handleUnknown(user);
+}
+
+const HAS_COMPLETION_VERB = /\b(hice|hicimos|termine|terminamos|complete|completamos|cumpli|finalice|acabe|listo)\b/;
+
+function todayDowFor(timezone: string | null | undefined): number {
+  const tz = timezone || "America/Argentina/Buenos_Aires";
+  const wd = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(new Date());
+  const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return map[wd] ?? new Date().getDay();
 }
 
 async function dispatchSession(

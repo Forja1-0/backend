@@ -75,6 +75,14 @@ export function trainingComplete(sessionName: string): string {
   );
 }
 
+export function trainingDaySwapped(doneSession: string, todayPlanSession: string): string {
+  return (
+    `🔥 *${doneSession}* registrado.\n\n` +
+    `_Ojo che, hoy en el plan tenías *${todayPlanSession}*. Si los cambiaste de orden está perfecto, sino acomodá la semana._\n\n` +
+    `¿RPE? Tirame un número del *1 al 10*.`
+  );
+}
+
 export function trainingNeedsNumber(): string {
   return "Mandame un número entre *1 y 10* para el esfuerzo (RPE).";
 }
