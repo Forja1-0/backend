@@ -41,6 +41,10 @@ export const step2Schema = z.object({
   chronic_conditions: z.array(z.string().max(100)).max(20).default([]),
   allergies: z.array(z.string().max(100)).max(20).default([]),
   medications: z.array(medicationSchema).max(20).default([]),
+  ecg_file_url: z.string().url().max(500).nullable().optional(),
+  xray_file_url: z.string().url().max(500).nullable().optional(),
+  blood_work_url: z.string().url().max(500).nullable().optional(),
+  medical_clearance_url: z.string().url().max(500).nullable().optional(),
 });
 
 // ── Step 3: Objetivo deportivo → goals ────────────────────
@@ -63,6 +67,7 @@ export const step4Schema = z.object({
   target_fat_g: z.number().int().min(0),
   meal_distribution: z.record(z.string(), z.unknown()).nullable().optional(),
   nutritionist_name: z.string().max(200).nullable().optional(),
+  plan_file_url: z.string().url().max(500).nullable().optional(),
 });
 
 // ── Step 5: Restricciones alimentarias → dietary_restrictions ──

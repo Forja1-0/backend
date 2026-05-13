@@ -74,14 +74,19 @@ export async function saveStep2(userId: string, d: Step2Data) {
   return tx(async (client) => {
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO medical_history
-         (user_id, active_injuries, past_injuries, chronic_conditions, allergies, medications)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (user_id, active_injuries, past_injuries, chronic_conditions, allergies, medications,
+          ecg_file_url, xray_file_url, blood_work_url, medical_clearance_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (user_id) DO UPDATE SET
          active_injuries = EXCLUDED.active_injuries,
          past_injuries = EXCLUDED.past_injuries,
          chronic_conditions = EXCLUDED.chronic_conditions,
          allergies = EXCLUDED.allergies,
-         medications = EXCLUDED.medications
+         medications = EXCLUDED.medications,
+         ecg_file_url = EXCLUDED.ecg_file_url,
+         xray_file_url = EXCLUDED.xray_file_url,
+         blood_work_url = EXCLUDED.blood_work_url,
+         medical_clearance_url = EXCLUDED.medical_clearance_url
        RETURNING id`,
       [
         userId,
@@ -90,6 +95,10 @@ export async function saveStep2(userId: string, d: Step2Data) {
         JSON.stringify(d.chronic_conditions),
         JSON.stringify(d.allergies),
         JSON.stringify(d.medications),
+        d.ecg_file_url ?? null,
+        d.xray_file_url ?? null,
+        d.blood_work_url ?? null,
+        d.medical_clearance_url ?? null,
       ],
     );
     await client.query(
@@ -141,8 +150,8 @@ export async function saveStep4(userId: string, d: Step4Data) {
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO nutrition_plans
          (user_id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
-          meal_distribution, nutritionist_name, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+          meal_distribution, nutritionist_name, plan_file_url, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
        RETURNING id`,
       [
         userId,
@@ -152,6 +161,7 @@ export async function saveStep4(userId: string, d: Step4Data) {
         d.target_fat_g,
         d.meal_distribution ? JSON.stringify(d.meal_distribution) : null,
         d.nutritionist_name ?? null,
+        d.plan_file_url ?? null,
       ],
     );
     await client.query(
