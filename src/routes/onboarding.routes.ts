@@ -123,7 +123,7 @@ onboardingRoutes.post(
         meals: parsed.meal_distribution.length,
         kcal: parsed.targets.kcal,
       });
-      res.json({ ok: true, id: saved.id, parsed });
+      res.json({ ok: true, id: saved.file_id, parsed });
     } catch (err) {
       next(err);
     }

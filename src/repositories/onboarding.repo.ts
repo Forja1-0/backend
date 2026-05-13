@@ -276,9 +276,11 @@ export async function saveStep7(userId: string, d: Step7Data) {
 }
 
 // ── Nutrition plan: upload PDF + parseo rico ───────────────
-// Persiste el binario + el JSON estructurado y deriva los macros target.
-// Si el parser no encontro macros, dejamos placeholder 0/0/0/0 que la UI
-// pide completar a mano en el preview.
+// Escribe en DOS tablas (espejo del flujo de training):
+//  * nutrition_plan_files: PDF crudo + parsed_data (jsonb rico).
+//  * nutrition_plans: macros + meal_distribution legacy (queries del bot).
+// PUT /step/4 (saveStep4) solo toca nutrition_plans, asi que el archivo
+// y el parseo rico sobreviven a futuros saves de macros.
 export interface NutritionUploadInput {
   fileBytes: Buffer;
   fileMime: string;
@@ -302,7 +304,7 @@ export async function saveNutritionPlanUpload(
   const carbs = Math.max(0, Math.round(p.targets.carbs_g ?? 0));
   const fat = Math.max(0, Math.round(p.targets.fat_g ?? 0));
   // meal_distribution legacy: {meal: {kcal, ...}}. Mantenemos para
-  // compatibilidad con queries existentes; el detalle rico va a parsed_data.
+  // compatibilidad con v_daily_remaining; el detalle rico va a parsed_data.
   const mealDist: Record<string, { kcal: number | null; protein_g: number | null; carbs_g: number | null; fat_g: number | null }> = {};
   for (const meal of p.meal_distribution) {
     mealDist[meal.meal_id] = {
@@ -313,26 +315,27 @@ export async function saveNutritionPlanUpload(
     };
   }
   return tx(async (client) => {
+    // 1. Desactivar planes vigentes en ambas tablas (replace-on-upload).
+    await client.query(
+      `UPDATE nutrition_plan_files SET is_active = false
+       WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
     await client.query(
       `UPDATE nutrition_plans SET is_active = false
        WHERE user_id = $1 AND is_active = true`,
       [userId],
     );
+
+    // 2. nutrition_plan_files: PDF crudo + parsed_data rico.
     const { rows } = await client.query<{ id: string }>(
-      `INSERT INTO nutrition_plans
-         (user_id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
-          meal_distribution, nutritionist_name,
-          raw_file_bytes, raw_file_mime, raw_file_name, raw_file_size,
-          parsed_data, parsed_at, parser_version, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, true)
+      `INSERT INTO nutrition_plan_files
+         (user_id, nutritionist_name, raw_file_bytes, raw_file_mime,
+          raw_file_name, raw_file_size, parsed_data, parser_version, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
        RETURNING id`,
       [
         userId,
-        kcal,
-        protein,
-        carbs,
-        fat,
-        Object.keys(mealDist).length ? JSON.stringify(mealDist) : null,
         p.nutritionist_name ?? null,
         input.fileBytes,
         input.fileMime,
@@ -342,11 +345,29 @@ export async function saveNutritionPlanUpload(
         input.parserVersion,
       ],
     );
+
+    // 3. nutrition_plans: macros + meal_distribution para queries del bot.
+    await client.query(
+      `INSERT INTO nutrition_plans
+         (user_id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
+          meal_distribution, nutritionist_name, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+      [
+        userId,
+        kcal,
+        protein,
+        carbs,
+        fat,
+        Object.keys(mealDist).length ? JSON.stringify(mealDist) : null,
+        p.nutritionist_name ?? null,
+      ],
+    );
+
     await client.query(
       `UPDATE users SET onboarding_step = GREATEST(onboarding_step, 4) WHERE id = $1`,
       [userId],
     );
-    return rows[0];
+    return { file_id: rows[0].id };
   });
 }
 
@@ -468,11 +489,11 @@ export async function getNutritionPlanFile(userId: string) {
     raw_file_bytes: Buffer | null;
     raw_file_mime: string | null;
     raw_file_name: string | null;
-    parsed_data: ParsedNutritionPlan | null;
-    parsed_at: Date | null;
+    parsed_data: ParsedNutritionPlan;
+    parsed_at: Date;
   }>(
     `SELECT id, raw_file_bytes, raw_file_mime, raw_file_name, parsed_data, parsed_at
-     FROM nutrition_plans
+     FROM nutrition_plan_files
      WHERE user_id = $1 AND is_active = true
      LIMIT 1`,
     [userId],

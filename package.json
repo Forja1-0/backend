@@ -10,7 +10,7 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate": "node scripts/apply-migration.mjs sql/migrations/003_plan_uploads.sql"
+    "migrate": "node scripts/apply-migration.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
