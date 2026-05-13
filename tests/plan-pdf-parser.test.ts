@@ -164,4 +164,35 @@ describe("plan-pdf-parser", () => {
       parseTrainingPlanFile(Buffer.from("x"), "application/pdf"),
     ).rejects.toBeInstanceOf(PdfParseError);
   });
+
+  it("detecta truncamiento (finishReason MAX_TOKENS) y rechaza sin intentar JSON.parse", async () => {
+    // Salida truncada: el modelo se quedo sin tokens y corto la respuesta a la mitad.
+    generateContentMock.mockResolvedValue({
+      response: {
+        text: () => '{"athlete_summary":{"name":"Pedrito"},"targets":{"kcal":2960,"protei',
+        candidates: [{ finishReason: "MAX_TOKENS" }],
+      },
+    });
+    await expect(
+      parseNutritionPlanFile(Buffer.from("x"), "application/pdf"),
+    ).rejects.toMatchObject({
+      name: "PdfParseError",
+      message: expect.stringContaining("MAX_TOKENS"),
+    });
+  });
+
+  it("aplica defaults aun si Gemini omite secciones criticas (targets, athlete_summary)", async () => {
+    // Gemini hallucina y omite secciones enteras; el saneamiento las completa.
+    generateContentMock.mockResolvedValue({
+      response: {
+        text: () => '{"diagnosis":"comia 2 veces"}',
+        candidates: [{ finishReason: "STOP" }],
+      },
+    });
+    const parsed = await parseNutritionPlanFile(Buffer.from("x"), "application/pdf");
+    expect(parsed.targets).toEqual({ kcal: null, protein_g: null, carbs_g: null, fat_g: null });
+    expect(parsed.athlete_summary.name).toBeNull();
+    expect(parsed.meal_distribution).toEqual([]);
+    expect(parsed.hydration.daily_l_min).toBeNull();
+  });
 });

@@ -24,12 +24,15 @@ const SUPPORTED_MIMES = new Set([
 
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 
-// temperatura baja: queremos extraccion fiel, no creatividad
+// temperatura baja: queremos extraccion fiel, no creatividad.
+// maxOutputTokens alto: los planes reales (nutricion 9 secciones, training
+// 6 dias + rehab + natacion + alertas) producen JSONs largos. Con 8192 se
+// truncaba a la mitad y rompia JSON.parse -> 422 sin persistir nada.
 const model = genAI.getGenerativeModel({
   model: "gemini-2.5-flash",
   generationConfig: {
     temperature: 0.1,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 32768,
     responseMimeType: "application/json",
   },
 });
@@ -350,9 +353,11 @@ async function callGeminiWithFile<T>(
   };
   const t0 = Date.now();
   let raw = "";
+  let finishReason: string | undefined;
   try {
     const result = await model.generateContent([{ text: prompt }, inline]);
     raw = result.response.text();
+    finishReason = result.response.candidates?.[0]?.finishReason;
   } catch (err) {
     logger.error("plan-pdf-parser: gemini call failed", {
       message: (err as any)?.message,
@@ -364,17 +369,39 @@ async function callGeminiWithFile<T>(
   }
 
   const ms = Date.now() - t0;
-  logger.info("plan-pdf-parser: gemini ok", { ms, mime, bytes: bytes.length });
+  logger.info("plan-pdf-parser: gemini ok", {
+    ms, mime, bytes: bytes.length, outChars: raw.length, finishReason,
+  });
 
-  // responseMimeType:application/json ya devuelve JSON limpio, pero por las
-  // dudas tolerar markdown fences o texto antes/despues.
+  // Truncamiento: el modelo se quedo sin tokens antes de cerrar el JSON.
+  // Tirar mensaje claro y NO intentar JSON.parse (siempre falla).
+  if (finishReason && finishReason !== "STOP") {
+    logger.error("plan-pdf-parser: salida truncada", {
+      finishReason, outChars: raw.length, sample: raw.slice(-300),
+    });
+    throw new PdfParseError(
+      `la IA corto la respuesta (finishReason=${finishReason}). El plan puede ser muy largo — probá con un PDF mas chico o avisanos.`,
+    );
+  }
+
+  // responseMimeType:application/json devuelve JSON limpio, pero por las
+  // dudas toleramos markdown fences o texto antes/despues.
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
+    logger.error("plan-pdf-parser: respuesta sin JSON", {
+      outChars: raw.length, sample: raw.slice(0, 500),
+    });
     throw new PdfParseError("la IA no devolvio JSON valido");
   }
   try {
     return JSON.parse(jsonMatch[0]) as T;
   } catch (err) {
+    logger.error("plan-pdf-parser: JSON corrupto", {
+      outChars: raw.length,
+      head: jsonMatch[0].slice(0, 300),
+      tail: jsonMatch[0].slice(-300),
+      parseErr: (err as Error).message,
+    });
     throw new PdfParseError("la IA devolvio JSON corrupto", err);
   }
 }
@@ -388,7 +415,14 @@ export async function parseNutritionPlanFile(
   mime: string,
 ): Promise<ParsedNutritionPlan> {
   const parsed = await callGeminiWithFile<ParsedNutritionPlan>(NUTRITION_PROMPT, bytes, mime);
-  // Saneamiento minimo de shape: garantizamos arrays en vez de null/undefined.
+  // Saneamiento defensivo: Gemini puede omitir secciones enteras y eso
+  // explota al persistir. Garantizamos shape completo.
+  parsed.athlete_summary ??= { name: null, age: null, weight_kg: null, height_cm: null, goal: null };
+  parsed.targets ??= { kcal: null, protein_g: null, carbs_g: null, fat_g: null };
+  parsed.nutritionist_name ??= null;
+  parsed.phase ??= null;
+  parsed.budget_notes ??= null;
+  parsed.diagnosis ??= null;
   parsed.protein_quality ??= [];
   parsed.meal_distribution ??= [];
   parsed.daily_variants ??= [];
@@ -399,6 +433,11 @@ export async function parseNutritionPlanFile(
   parsed.success_indicators ??= [];
   parsed.general_notes ??= [];
   parsed.hydration ??= { daily_l_min: null, daily_l_double_session: null, electrolyte_recipe: null, notes: null };
+  // Items de cada comida tambien pueden venir incompletos.
+  for (const meal of parsed.meal_distribution) {
+    meal.items ??= [];
+    meal.macros ??= { kcal: null, protein_g: null, carbs_g: null, fat_g: null };
+  }
   return parsed;
 }
 
@@ -407,12 +446,19 @@ export async function parseTrainingPlanFile(
   mime: string,
 ): Promise<ParsedTrainingPlanRich> {
   const parsed = await callGeminiWithFile<ParsedTrainingPlanRich>(TRAINING_PROMPT, bytes, mime);
+  parsed.athlete_summary ??= { name: null, age: null, weight_kg: null, height_cm: null, active_injuries: [] };
+  parsed.athlete_summary.active_injuries ??= [];
+  parsed.event ??= { name: null, date: null, distance: null };
+  parsed.period ??= { label: null, weeks: null, start_month: null, end_month: null };
+  parsed.coach_name ??= null;
   parsed.weekly_structure ??= { normal: [], reduced: [] };
   parsed.weekly_structure.normal ??= [];
   parsed.weekly_structure.reduced ??= [];
   parsed.rehab_rules ??= [];
   parsed.days ??= [];
   parsed.rehab_protocols ??= [];
+  parsed.swim_plan ??= null;
+  parsed.progression_model ??= null;
   parsed.alerts ??= { stop_signals: [], reduce_signals: [] };
   parsed.alerts.stop_signals ??= [];
   parsed.alerts.reduce_signals ??= [];
