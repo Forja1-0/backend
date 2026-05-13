@@ -11,7 +11,15 @@ import { errorHandler } from "./middleware/error-handler.js";
 export const app = express();
 
 app.use(helmet());
-app.use(cors({ origin: env.CORS_ORIGINS.split(",").filter(Boolean) }));
+
+const corsOrigins = env.CORS_ORIGINS.split(",").map(s => s.trim()).filter(Boolean);
+if (corsOrigins.length === 0) {
+  logger.warn("CORS_ORIGINS vacio — el browser va a ser bloqueado. Setea la env var con los dominios del frontend.");
+} else {
+  logger.info("CORS allowed origins", { origins: corsOrigins });
+}
+app.use(cors({ origin: corsOrigins }));
+
 app.use(compression());
 app.use(express.json({ limit: "2mb" }));
 
