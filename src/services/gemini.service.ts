@@ -59,8 +59,34 @@ Si el texto no describe ninguna comida, respondé con: []`;
     if (!jsonMatch) return null;
     return JSON.parse(jsonMatch[0]) as ParsedFoodItem[];
   } catch (err) {
-    logger.error("gemini parseMealText failed", { err, rawText });
+    logger.error("gemini parseMealText failed", {
+      message: (err as any)?.message,
+      status: (err as any)?.status,
+      statusText: (err as any)?.statusText,
+      errorDetails: (err as any)?.errorDetails,
+      rawText,
+    });
     return null;
+  }
+}
+
+/**
+ * Self-check de Gemini al arrancar el proceso. Loguea OK o el motivo del fallo
+ * para detectar key invalida o modelo retirado sin esperar al primer mensaje.
+ */
+export async function pingGemini(): Promise<boolean> {
+  try {
+    const r = await flash.generateContent("Respondé con la palabra OK y nada mas.");
+    const text = r.response.text().trim();
+    logger.info("gemini ping ok", { sample: text.slice(0, 30) });
+    return true;
+  } catch (err) {
+    logger.error("gemini ping failed — la AI no va a funcionar", {
+      message: (err as any)?.message,
+      status: (err as any)?.status,
+      statusText: (err as any)?.statusText,
+    });
+    return false;
   }
 }
 

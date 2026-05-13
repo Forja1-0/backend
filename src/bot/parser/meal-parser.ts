@@ -126,35 +126,190 @@ async function tryAlias(userId: string, normalized: string): Promise<ParseResult
 }
 
 // ────────────────────────────────────────────────────────────
-// 2) QUICK — regex de cantidad + searchFood
+// 2) QUICK — parser tokenizado
+//
+// Camina los tokens izq→der buscando triplets (cantidad, unidad, food).
+// Soporta:
+//   - unidades de masa/volumen:   "100g", "200 gramos", "1 kg", "500ml"
+//   - unidades contables:         "2 rodajas", "1 taza", "3 fetas"
+//   - foods contables sin unidad: "5 huevos", "2 bananas"
+//   - food antes o despues:       "pescado 100g" / "100g pescado"
+//   - items multiples:            "X y Z", "X con Z", "X, Z"
+//   - items sin cantidad:         "100g pollo y arroz" → arroz toma porcion estandar
 // ────────────────────────────────────────────────────────────
-const QUANTITY_FOOD_REGEX =
-  /(\d+(?:[.,]\d+)?)\s*(g|gr|gs|grs|gramos|kg|kgs|kilos?|ml|cc|lts?|litros?)?\s+(?:de\s+)?([a-z][a-z\s]{2,40}?)(?=\s+(?:y|con|mas|de|\d|$|[,.]))/g;
+
+const MASS_UNITS_G = new Set(["g", "gr", "gs", "grs", "gramo", "gramos"]);
+const MASS_UNITS_KG = new Set(["kg", "kgs", "kilo", "kilos"]);
+const VOL_UNITS_ML = new Set(["ml", "cc"]);
+const VOL_UNITS_L = new Set(["l", "lt", "lts", "litro", "litros"]);
+
+/** Unidades contables: cuantos gramos aproximados pesa CADA una. */
+const COUNTABLE_UNIT_G: Record<string, number> = {
+  rodaja: 30, rodajas: 30,
+  feta: 25, fetas: 25,
+  taza: 240, tazas: 240,
+  vaso: 250, vasos: 250,
+  pocillo: 100, pocillos: 100,
+  cucharada: 15, cucharadas: 15,
+  cucharadita: 5, cucharaditas: 5,
+  porcion: 150, porciones: 150,
+  plato: 300, platos: 300,
+  unidad: 100, unidades: 100,
+  pieza: 100, piezas: 100,
+  puñado: 30, puñados: 30, punado: 30, punados: 30,
+};
+
+/** Foods que se cuentan en unidades (sin unidad explicita): peso aprox por pieza. */
+const FOOD_PER_UNIT_G: Record<string, number> = {
+  huevo: 60, huevos: 60,
+  banana: 120, bananas: 120,
+  manzana: 180, manzanas: 180,
+  pera: 180, peras: 180,
+  naranja: 130, naranjas: 130,
+  mandarina: 90, mandarinas: 90,
+  kiwi: 75, kiwis: 75,
+  durazno: 150, duraznos: 150,
+  ciruela: 60, ciruelas: 60,
+  tomate: 120, tomates: 120,
+  papa: 170, papas: 170,
+  zanahoria: 80, zanahorias: 80,
+  galletita: 8, galletitas: 8,
+  medialuna: 50, medialunas: 50,
+};
+
+const STOPWORDS_IN_FOOD = new Set(["de", "del", "la", "el", "las", "los", "un", "una", "uno", "con"]);
+const CONJUNCTIONS = new Set(["y", "e", "mas", "más", "con", "+", ","]);
+
+/** Tokens que NUNCA forman parte del nombre de un food (verbos, adverbios temporales). */
+const FOOD_NOISE = new Set([
+  "comi", "come", "comer", "cene", "ceno", "cenar", "cenando",
+  "desayune", "desayuno", "desayunar", "desayunando",
+  "almorce", "almuerzo", "almorzar", "almorzando",
+  "merende", "meriendo", "merendar", "merendando",
+  "tome", "tomo", "tomar", "tomando",
+  "probe", "probar", "probando",
+  "ahora", "recien", "hoy", "ayer", "anoche", "manana", "tarde", "noche",
+  "me", "te", "se", "le",
+]);
+
+interface QtyToken {
+  qty: number;
+  /** "g" canonical despues de normalizar (kg→g, l→ml, etc). null = sin unidad. */
+  unit: "g" | "count" | null;
+  /** Index en el array de tokens. */
+  i: number;
+  /** Cuantos tokens consume (numero + unidad). */
+  consumed: number;
+}
 
 async function tryQuick(normalized: string): Promise<ParseResult | null> {
-  const matches = Array.from(normalized.matchAll(QUANTITY_FOOD_REGEX));
-  if (matches.length === 0) return null;
+  const tokens = normalized
+    .replace(/([,.+])/g, " $1 ")
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+
+  // Detectar todas las cantidades con su rango de tokens consumidos.
+  const qtyHits: QtyToken[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const num = parseNumber(tokens[i]);
+    if (num === null) continue;
+    const next = tokens[i + 1]?.toLowerCase() ?? "";
+
+    if (MASS_UNITS_G.has(next)) qtyHits.push({ qty: num, unit: "g", i, consumed: 2 });
+    else if (MASS_UNITS_KG.has(next)) qtyHits.push({ qty: num * 1000, unit: "g", i, consumed: 2 });
+    else if (VOL_UNITS_ML.has(next)) qtyHits.push({ qty: num, unit: "g", i, consumed: 2 });
+    else if (VOL_UNITS_L.has(next)) qtyHits.push({ qty: num * 1000, unit: "g", i, consumed: 2 });
+    else if (COUNTABLE_UNIT_G[next] !== undefined) {
+      qtyHits.push({ qty: num * COUNTABLE_UNIT_G[next], unit: "g", i, consumed: 2 });
+    } else {
+      // "100g" pegado: el numero ya trae la unidad adentro
+      const inline = tokens[i].match(/^(\d+(?:[.,]\d+)?)(g|gr|grs|gramos|kg|kgs|kilos?|ml|cc|lts?|litros?)$/i);
+      if (inline) {
+        const u = inline[2].toLowerCase();
+        const factor = MASS_UNITS_KG.has(u) || VOL_UNITS_L.has(u) ? 1000 : 1;
+        qtyHits.push({ qty: parseFloat(inline[1].replace(",", ".")) * factor, unit: "g", i, consumed: 1 });
+      } else {
+        // Numero sin unidad: dejarlo como "count" para resolver con food contable.
+        qtyHits.push({ qty: num, unit: "count", i, consumed: 1 });
+      }
+    }
+  }
+
+  if (qtyHits.length === 0) {
+    // Sin numeros: tryQuick no puede. Caera a clarify/AI segun corresponda.
+    return null;
+  }
+
+  const consumedTokens = new Set<number>();
+  const candidates: { name: string; grams: number; sourceQtyIndex: number | null }[] = [];
+
+  // Para cada qty, intentamos asociar food a su derecha (preferente) o izquierda.
+  for (const hit of qtyHits) {
+    // Marcar los tokens de la qty como consumidos
+    for (let k = 0; k < hit.consumed; k++) consumedTokens.add(hit.i + k);
+
+    // Buscar food a la derecha primero
+    const right = collectFoodSpan(tokens, hit.i + hit.consumed, consumedTokens, "forward");
+    if (right) {
+      const grams = resolveGrams(hit, right.firstFoodToken);
+      right.indices.forEach((idx) => consumedTokens.add(idx));
+      candidates.push({ name: right.text, grams, sourceQtyIndex: hit.i });
+      continue;
+    }
+    // Si no hay nada a la derecha, mirar a la izquierda
+    const left = collectFoodSpan(tokens, hit.i - 1, consumedTokens, "backward");
+    if (left) {
+      const grams = resolveGrams(hit, left.firstFoodToken);
+      left.indices.forEach((idx) => consumedTokens.add(idx));
+      candidates.push({ name: left.text, grams, sourceQtyIndex: hit.i });
+      continue;
+    }
+    // Sin food asociable: descartar este hit
+  }
+
+  // Items sin cantidad pero ligados con "y/con": buscar food spans en lo no consumido
+  for (let i = 0; i < tokens.length; i++) {
+    if (consumedTokens.has(i)) continue;
+    const t = tokens[i].toLowerCase();
+    if (CONJUNCTIONS.has(t) || STOPWORDS_IN_FOOD.has(t)) continue;
+    if (!/^[a-záéíóúñ]/i.test(t)) continue;
+    const span = collectFoodSpan(tokens, i, consumedTokens, "forward");
+    if (span && span.text.length >= 3) {
+      span.indices.forEach((idx) => consumedTokens.add(idx));
+      candidates.push({ name: span.text, grams: 0, sourceQtyIndex: null });
+    }
+  }
+
+  if (candidates.length === 0) return null;
 
   const items: ParsedMealItem[] = [];
   let isEstimate = false;
 
-  for (const m of matches) {
-    const rawQty = parseFloat(m[1].replace(",", "."));
-    const unit = m[2] ?? "";
-    const foodName = m[3].trim();
-
-    const grams =
-      /^(kg|kgs|kilos?|lts?|litros?)$/.test(unit) ? Math.round(rawQty * 1000) :
-      unit ? Math.round(rawQty) :
-      Math.round(rawQty); // sin unidad asumimos gramos
-
-    const dbMatches = await foodRepo.searchFood(foodName, 1);
+  for (const cand of candidates) {
+    const dbMatches = await foodRepo.searchFood(cand.name, 1);
     const top = dbMatches[0];
-    if (!top || top.match_score < MATCH_CONFIDENCE_THRESHOLD) continue;
+    if (!top || top.match_score < MATCH_CONFIDENCE_THRESHOLD) {
+      // No matcheo: si era item sin qty, lo dropeamos; si tenia qty, lo dejamos como estimate
+      if (cand.sourceQtyIndex !== null) {
+        items.push({
+          name: cand.name,
+          grams: cand.grams,
+          kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0,
+          food_item_id: null,
+          matched_db_name: null,
+        });
+        isEstimate = true;
+      }
+      continue;
+    }
+
+    // Si no hay cantidad explicita, usar standard_portion_g del food
+    const grams = cand.grams > 0 ? cand.grams : (top.standard_portion_g ?? 100);
+    if (cand.grams === 0) isEstimate = true;
 
     const factor = grams / 100;
     items.push({
-      name: foodName,
+      name: cand.name,
       grams,
       kcal: Math.round(top.kcal_per_100g * factor),
       protein_g: top.protein_per_100g * factor,
@@ -168,7 +323,72 @@ async function tryQuick(normalized: string): Promise<ParseResult | null> {
 
   if (items.length === 0) return null;
 
-  return finalize(items, isEstimate, items.every((i) => i.matched_db_name) ? 0.85 : 0.7, "quick");
+  const allMatched = items.every((i) => i.matched_db_name);
+  const confidence = allMatched && !isEstimate ? 0.9 : allMatched ? 0.8 : 0.65;
+  return finalize(items, isEstimate, confidence, "quick");
+}
+
+function parseNumber(token: string): number | null {
+  if (/^\d+(?:[.,]\d+)?$/.test(token)) return parseFloat(token.replace(",", "."));
+  return null;
+}
+
+/**
+ * Si la unidad detectada fue "count" (numero pelado), intentamos resolver
+ * el peso usando FOOD_PER_UNIT_G del primer token de comida. Si no esta,
+ * caemos a interpretar el numero como gramos (legacy).
+ */
+function resolveGrams(hit: QtyToken, firstFoodToken: string): number {
+  if (hit.unit === "g") return Math.round(hit.qty);
+  // unit === "count"
+  const perUnit = FOOD_PER_UNIT_G[firstFoodToken.toLowerCase()];
+  if (perUnit !== undefined) return Math.round(hit.qty * perUnit);
+  // Numero sin unidad ni food contable conocida: asumimos gramos.
+  return Math.round(hit.qty);
+}
+
+/**
+ * Recolecta tokens contiguos formando el nombre de un food, parando en
+ * conjunciones, cantidades, puntuacion, o tokens ya consumidos.
+ */
+function collectFoodSpan(
+  tokens: string[],
+  start: number,
+  consumed: Set<number>,
+  direction: "forward" | "backward",
+): { text: string; indices: number[]; firstFoodToken: string } | null {
+  const step = direction === "forward" ? 1 : -1;
+  const indices: number[] = [];
+  const collected: string[] = [];
+
+  for (let i = start; i >= 0 && i < tokens.length; i += step) {
+    if (consumed.has(i)) break;
+    const t = tokens[i].toLowerCase();
+    if (CONJUNCTIONS.has(t)) break;
+    if (parseNumber(t) !== null) break;
+    if (/^[,.+]$/.test(t)) break;
+    // Noise (verbos de comer, adverbios temporales): saltar pero no incluir
+    if (FOOD_NOISE.has(t)) {
+      indices.push(i);
+      continue;
+    }
+    // Stopwords (de, la, el): saltar pero no incluir
+    if (STOPWORDS_IN_FOOD.has(t)) {
+      indices.push(i);
+      continue;
+    }
+    if (!/^[a-záéíóúñ]/i.test(tokens[i])) break;
+    indices.push(i);
+    collected.push(t);
+  }
+
+  if (collected.length === 0) return null;
+  const ordered = direction === "forward" ? collected : [...collected].reverse();
+  return {
+    text: ordered.join(" "),
+    indices,
+    firstFoodToken: ordered[0],
+  };
 }
 
 // ────────────────────────────────────────────────────────────
