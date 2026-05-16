@@ -1,6 +1,7 @@
 import type { User } from "../../types/user.types.js";
-import { parseMeal, applyStateChoice, type ParseResult } from "../parser/meal-parser.js";
+import { parseMeal, applyStateChoice, applyFoodChoice, buildItem, type ParseResult, type ClarifyEntry } from "../parser/meal-parser.js";
 import * as mealRepo from "../../repositories/meal.repo.js";
+import * as foodRepo from "../../repositories/food.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
 import { sendText } from "../../services/evolution.service.js";
 import {
@@ -8,8 +9,10 @@ import {
   clearSession,
   type PendingMeal,
   type MealStateClarify,
+  type FoodClarify,
 } from "../session.store.js";
 import { classify } from "../parser/intent-classifier.js";
+import { classifyState } from "../parser/food-resolve.js";
 import { normalize } from "../parser/normalize.js";
 import * as T from "../personality/templates.js";
 import { logger } from "../../config/logger.js";
@@ -60,6 +63,16 @@ export async function handleMealLog(
     });
     await sendText(jid, T.mealStateClarify(result.state_clarify));
     return true;
+  }
+
+  if (result.source === "needs_food_clarification" && result.food_clarify) {
+    const fc = result.food_clarify as FoodClarify;
+    const first = fc.queue[0];
+    if (first) {
+      setSession(jid, { flow: "meal_food_clarify", clarify: fc });
+      await sendText(jid, T.mealFoodClarify(first.item.food, first.options));
+      return true;
+    }
   }
 
   if (result.source === "none" || result.items.length === 0) {
@@ -215,4 +228,85 @@ async function persistMeal(user: User, rawText: string, result: ParseResult): Pr
   if (result.frequent_meal_id) {
     await frequentMealRepo.bumpUseCount(result.frequent_meal_id);
   }
+}
+
+/**
+ * Procesa la respuesta del usuario al pedir desambiguación de alimento
+ * (flow meal_food_clarify). El user responde con un número que
+ * corresponde a una de las opciones REALES de la DB.
+ */
+export async function handleMealFoodClarify(
+  user: User,
+  answer: string,
+  session: { clarify: FoodClarify },
+): Promise<void> {
+  const jid = user.wa_chat_id!;
+  const fc = session.clarify;
+  const current = fc.queue[0];
+
+  if (!current) {
+    clearSession(jid);
+    await sendText(jid, T.mealFailed());
+    return;
+  }
+
+  // Parsear número
+  const num = parseInt(answer.trim(), 10);
+  if (isNaN(num) || num < 1 || num > current.options.length) {
+    // No entendimos, repetir la pregunta
+    await sendText(jid, T.mealFoodClarify(current.item.food, current.options));
+    return;
+  }
+
+  const chosen = current.options[num - 1];
+  const food = await foodRepo.getFoodById(chosen.food_item_id);
+
+  if (!food) {
+    clearSession(jid);
+    await sendText(jid, T.mealFailed());
+    return;
+  }
+
+  // Construir el item con macros de SARA2
+  const { entry, estimate } = await buildItem(
+    current.item as any,
+    food,
+    classifyState(food.name),
+  );
+  if (estimate) fc.is_estimate = true;
+  fc.resolved.push(entry);
+
+  // Quitar el item procesado de la cola
+  fc.queue.shift();
+
+  // ¿Quedan más items por desambiguar?
+  if (fc.queue.length > 0) {
+    const next = fc.queue[0];
+    setSession(jid, { flow: "meal_food_clarify", clarify: fc });
+    await sendText(jid, T.mealFoodClarify(next.item.food, next.options));
+    return;
+  }
+
+  // Cola vacía → persistir y mostrar resumen
+  clearSession(jid);
+
+  const items = fc.resolved;
+  const totals = items.reduce(
+    (a, it) => ({
+      kcal: a.kcal + it.kcal,
+      protein: a.protein + it.protein_g,
+      carbs: a.carbs + it.carbs_g,
+      fat: a.fat + it.fat_g,
+    }),
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+  );
+
+  await persistMeal(user, fc.raw_input, {
+    items,
+    totals,
+    is_estimate: fc.is_estimate,
+    confidence: 0.9,
+    source: "quick",
+  });
+  await sendText(jid, T.mealRegistered(items, totals, fc.is_estimate));
 }

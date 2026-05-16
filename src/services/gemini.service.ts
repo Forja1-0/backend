@@ -21,45 +21,55 @@ export async function generateText(prompt: string): Promise<string> {
 }
 
 // ════════════════════════════════════════════════════════════
-// PARSE DE COMIDA (fallback del meal-parser)
+// SPLIT DE COMIDA (NLU — fallback del meal-parser)
+//
+// La AI SOLO separa el texto libre en items con cantidad. NUNCA
+// estima macros: la fuente de verdad es food_items (SARA2) +
+// food_portions. La AI es un intermediario para buscar mejor.
 // ════════════════════════════════════════════════════════════
-export interface ParsedFoodItem {
-  name: string;
-  grams: number;
-  kcal: number;
-  protein_g: number;
-  carbs_g: number;
-  fat_g: number;
-  is_estimate: boolean;
+export interface SplitMealItem {
+  /** alimento "crudo" tal como lo dijo el usuario (sin cantidad). */
+  food: string;
+  /** número detectado, o null si no dijo cantidad. */
+  qty: number | null;
+  /** 'g' = gramos · 'units' = unidades contables · 'measure' = medida casera · null */
+  unit: "g" | "units" | "measure" | null;
+  /** solo si unit='measure': "plato" | "feta" | "cucharada" | ... */
+  measure: string | null;
+  /** estado si el usuario lo dijo, si no null. */
+  state: "crudo" | "cocido" | null;
 }
 
-export async function parseMealText(rawText: string): Promise<ParsedFoodItem[] | null> {
-  const prompt = `Sos un nutricionista deportivo argentino. El atleta dijo: "${rawText}"
+export async function splitMealText(rawText: string): Promise<SplitMealItem[] | null> {
+  const prompt = `Sos un parser de mensajes de comida de atletas argentinos. Tu ÚNICO trabajo es SEPARAR el texto en alimentos individuales con su cantidad. NO estimes calorías ni macros — eso lo resuelve otra parte del sistema con una base de datos.
 
-Extraé cada alimento mencionado y estimá sus macros. Si no se menciona cantidad, usá una porción típica argentina.
+Mensaje del atleta: "${rawText}"
 
-Respondé SOLO con JSON válido, sin texto adicional, con este formato exacto:
+Devolvé SOLO JSON válido (sin markdown, sin texto extra), un array donde cada item es:
 [
   {
-    "name": "nombre del alimento",
-    "grams": número,
-    "kcal": número,
-    "protein_g": número,
-    "carbs_g": número,
-    "fat_g": número,
-    "is_estimate": true
+    "food": "nombre simple del alimento, sin cantidad ni verbo (ej: 'milanesa', 'huevo', 'arroz')",
+    "qty": número o null si no dijo cantidad,
+    "unit": "g" si dijo gramos/kg | "units" si son unidades contables (2 milanesas, 3 huevos) | "measure" si dijo una medida casera (un plato, 2 fetas) | null si no hay cantidad,
+    "measure": "plato"|"feta"|"cucharada"|"taza"|"vaso"|"pote"|"rodaja"|"porcion"|null,
+    "state": "crudo"|"cocido"|null (solo si lo dijo explícitamente)
   }
 ]
 
-Si el texto no describe ninguna comida, respondé con: []`;
+REGLAS:
+- Separá "y", "con", "+", comas en items distintos. "milanesa de vaca" es UN item (no separar "de").
+- Conservá la variedad si la dijo: "milanesa de cerdo" → food: "milanesa de cerdo".
+- NO inventes alimentos que no mencionó. NO agregues macros.
+- "2 milanesas" → qty 2, unit "units". "200g de arroz" → qty 200, unit "g". "un plato de fideos" → qty 1, unit "measure", measure "plato".
+- Si no hay ninguna comida, devolvé [].`;
 
   try {
     const raw = await generateText(prompt);
     const jsonMatch = raw.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return null;
-    return JSON.parse(jsonMatch[0]) as ParsedFoodItem[];
+    return JSON.parse(jsonMatch[0]) as SplitMealItem[];
   } catch (err) {
-    logger.error("gemini parseMealText failed", {
+    logger.error("gemini splitMealText failed", {
       message: (err as any)?.message,
       status: (err as any)?.status,
       statusText: (err as any)?.statusText,

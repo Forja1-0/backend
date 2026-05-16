@@ -263,6 +263,15 @@ export function mealClarify(foodHint: string): string {
   ]);
 }
 
+export function mealFoodClarify(foodLabel: string, options: { name: string }[]): string {
+  const lines = [`🤔 *¿Qué tipo de ${foodLabel}?*\n`];
+  options.forEach((o, i) => {
+    lines.push(`  *${i + 1}.* ${o.name}`);
+  });
+  lines.push(`\nRespondé con el *número*.`);
+  return lines.join("\n");
+}
+
 export function mealRegisteredEstimated(
   items: MealSummaryItem[],
   totals: { kcal: number; protein: number; carbs: number; fat: number },

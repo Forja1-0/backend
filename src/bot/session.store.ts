@@ -45,7 +45,24 @@ export type SessionState =
       is_estimate: boolean;
       raw_input: string;
     }
+  | { flow: "meal_food_clarify"; clarify: FoodClarify }
   | { flow: "baja_confirm" };
+
+/**
+ * Cola de desambiguación: items ya resueltos + items pendientes de elegir.
+ * Importado por meal-parser.ts que lo genera, y por meal.handler.ts que lo consume.
+ */
+export interface FoodClarify {
+  resolved: PendingMeal["parsed_items"];
+  queue: FoodClarifyEntry[];
+  raw_input: string;
+  is_estimate: boolean;
+}
+
+export interface FoodClarifyEntry {
+  item: { raw: string; mode: string; qty: number; measure?: string; food: string };
+  options: { food_item_id: string; name: string }[];
+}
 
 const store = new Map<string, SessionState>();
 

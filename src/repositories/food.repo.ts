@@ -81,6 +81,61 @@ export async function searchFood(q: string, limit = 10): Promise<FoodMatch[]> {
   return rows;
 }
 
+export interface FoodCandidate extends FoodItem {
+  /** score crudo del cascade (prefix/fts/trgm) — solo desempate. */
+  base_score: number;
+}
+
+/**
+ * Recall AMPLIO de candidatos para el resolver del parser. NO aplica
+ * threshold: devuelve todo lo que prefix/fts/trgm pesque para que el
+ * ranking por cobertura de tokens (food-match.ts) decida. Esto evita el
+ * bug del FTS que topea en ~0.40 y rechazaba matches correctos.
+ */
+export async function searchFoodCandidates(q: string, limit = 25): Promise<FoodCandidate[]> {
+  const trimmed = q.trim().toLowerCase();
+  if (trimmed.length < 2) return [];
+
+  const { rows } = await query<FoodCandidate>(
+    `WITH
+       prefix AS (
+         SELECT id, 1.0::real AS base_score
+         FROM food_items WHERE lower(name) LIKE $1 || '%' LIMIT $2
+       ),
+       fts AS (
+         SELECT fi.id,
+                LEAST(ts_rank(to_tsvector('spanish', fi.name),
+                              plainto_tsquery('spanish', $1)) * 4, 1.0)::real AS base_score
+         FROM food_items fi
+         WHERE to_tsvector('spanish', fi.name) @@ plainto_tsquery('spanish', $1)
+         ORDER BY base_score DESC LIMIT $2
+       ),
+       trgm AS (
+         SELECT fi.id, similarity(lower(fi.name), $1)::real AS base_score
+         FROM food_items fi
+         WHERE similarity(lower(fi.name), $1) > 0.18
+         ORDER BY base_score DESC LIMIT $2
+       ),
+       combined AS (
+         SELECT DISTINCT ON (id) id, base_score FROM (
+           SELECT * FROM prefix
+           UNION ALL SELECT * FROM fts
+           UNION ALL SELECT * FROM trgm
+         ) u ORDER BY id, base_score DESC
+       )
+     SELECT fi.id, fi.name, fi.category, fi.kcal_per_100g,
+            fi.protein_per_100g, fi.carbs_per_100g, fi.fat_per_100g,
+            fi.fiber_per_100g, fi.standard_portion_g, fi.source,
+            c.base_score
+     FROM combined c
+     JOIN food_items fi ON fi.id = c.id
+     ORDER BY c.base_score DESC
+     LIMIT $2`,
+    [trimmed, limit],
+  );
+  return rows;
+}
+
 export async function getFoodById(id: string): Promise<FoodItem | null> {
   const { rows } = await query<FoodItem>(
     `SELECT id, name, category, kcal_per_100g, protein_per_100g,

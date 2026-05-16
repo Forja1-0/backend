@@ -16,10 +16,10 @@
 -- ============================================================
 
 ALTER TABLE training_plans
-  ADD COLUMN exercises JSONB;
+  ADD COLUMN IF NOT EXISTS exercises JSONB;
 
 -- Indice GIN para queries futuras tipo "qué dias incluyen sentadilla"
-CREATE INDEX idx_training_plans_exercises_gin
+CREATE INDEX IF NOT EXISTS idx_training_plans_exercises_gin
   ON training_plans USING GIN (exercises);
 
 COMMENT ON COLUMN training_plans.exercises IS

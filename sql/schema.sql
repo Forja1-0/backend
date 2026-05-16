@@ -246,7 +246,7 @@ CREATE INDEX idx_food_items_category ON food_items (category);
 CREATE TABLE food_portions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     food_id         UUID REFERENCES food_items(id) ON DELETE CASCADE,
-    food_query      TEXT NOT NULL,
+    food_query      TEXT,
     portion_name    TEXT NOT NULL,
     portion_grams   NUMERIC NOT NULL CHECK (portion_grams > 0),
     portion_state   TEXT CHECK (portion_state IN ('crudo', 'cocido')),

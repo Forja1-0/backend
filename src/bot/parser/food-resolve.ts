@@ -1,35 +1,30 @@
 /**
- * Resolución de un alimento (texto libre) → fila de food_items, con:
- *   - default de variedad: "arroz" → blanco, "fideos" → trigo (NO sin TACC)
- *   - estado crudo/cocido: detectado del texto o ambiguo (preguntar)
+ * Resuelve un texto de alimento → fila(s) de food_items.
  *
- * No calcula gramos ni macros — solo elige QUÉ fila de food_items.
+ * NO adivina ni inventa: si hay varias variedades/estados plausibles en
+ * la DB, devuelve `ambiguous` con las opciones REALES para que el bot le
+ * pregunte al usuario (lista numerada). La verdad es siempre SARA2.
  */
 import * as foodRepo from "../../repositories/food.repo.js";
-import type { FoodMatch } from "../../repositories/food.repo.js";
-import { isStatefulFood } from "./cooking-factors.js";
+import type { FoodCandidate } from "../../repositories/food.repo.js";
+import { rankByCoverage } from "./food-match.js";
 
 export type FoodState = "crudo" | "cocido" | null;
 
-export interface ResolvedFood {
-  /** Mejor fila elegida (según estado conocido o default). */
-  food: FoodMatch;
-  state: FoodState;
-  /** Texto para avisar al usuario qué se asumió ("Asumí arroz blanco…"). */
-  note: string | null;
-  /** Si el estado es ambiguo y conviene preguntar crudo/cocido. */
-  ambiguousState: boolean;
-  crudoFood?: FoodMatch;
-  cocidoFood?: FoodMatch;
-}
+export type ResolveOutcome =
+  | { kind: "resolved"; food: FoodCandidate; state: FoodState }
+  | { kind: "ambiguous"; options: FoodCandidate[]; state: FoodState; query: string }
+  | { kind: "none" };
 
 const CRUDO_RE = /\b(crudo|cruda|crudos|crudas|sin cocinar)\b/;
 const COCIDO_RE = /\b(cocido|cocida|cocidos|cocidas|hervido|hervida|hervidos|cocinad[oa]|al dente)\b/;
-
-const NAME_CRUDO_RE = /\b(crud[oa]s?)\b/;
+const NAME_CRUDO_RE = /\bcrud[oa]s?\b/;
 const NAME_COCIDO_RE = /\b(cocid[oa]s?|hervid[oa]s?)\b/;
 
-/** Extrae el estado mencionado en el texto y lo quita del query. */
+const COVERAGE_FLOOR = 0.5;
+const MAX_OPTIONS = 6;
+const strip = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
 export function extractState(text: string): { query: string; state: FoodState } {
   let state: FoodState = null;
   if (COCIDO_RE.test(text)) state = "cocido";
@@ -38,85 +33,77 @@ export function extractState(text: string): { query: string; state: FoodState } 
   return { query: query || text, state };
 }
 
-/**
- * Reglas de default de variedad. Devuelve el query (posiblemente
- * enriquecido) y un texto de aviso si asumimos algo.
- */
-function applyVarietyDefault(query: string): { query: string; note: string | null } {
-  const q = query.toLowerCase();
-
-  // "arroz" sin variedad → blanco
-  if (/\barroz\b/.test(q) && !/(integral|yamani|basmati|primavera|con pollo|salvaje)/.test(q)) {
-    return { query: `${query} blanco`, note: "Asumí arroz blanco. Si es otro tipo, decime." };
-  }
-  // "fideos/pasta" sin tipo → trigo común (NO sin TACC / arroz / soja)
-  if (/\b(fideos?|pasta|tallarines?)\b/.test(q) && !/(sin tacc|arroz|soja|integral|legumbre)/.test(q)) {
-    return { query, note: "Asumí fideos de trigo. Si es otro tipo, decime." };
-  }
-  return { query, note: null };
-}
-
-function classifyState(name: string): FoodState {
-  if (NAME_COCIDO_RE.test(name.toLowerCase())) return "cocido";
-  if (NAME_CRUDO_RE.test(name.toLowerCase())) return "crudo";
+export function classifyState(name: string): FoodState {
+  const n = strip(name);
+  if (NAME_COCIDO_RE.test(n)) return "cocido";
+  if (NAME_CRUDO_RE.test(n)) return "crudo";
   return null;
 }
 
-/** Penaliza candidatos no deseados (SIN TACC cuando no se pidió). */
-function score(c: FoodMatch, q: string): number {
-  let s = c.match_score;
-  const n = c.name.toLowerCase();
-  if (/sin tacc/.test(n) && !/sin tacc/.test(q)) s -= 0.4;
-  if (/\barroz\b/.test(q) && /\bblanco\b/.test(n)) s += 0.15;
-  if (/\b(fideos?|pasta|tallarines?)\b/.test(q) && /\btrigo\b/.test(n)) s += 0.1;
-  return s;
+/** Sesgo de ordenamiento dentro de igual cobertura (no fuerza, ordena). */
+function bias(query: string, name: string): number {
+  const q = strip(query);
+  const n = strip(name);
+  let b = 0;
+  // "arroz" sin variedad → blanco primero
+  if (/\barroz\b/.test(q) && !/(integral|yamani|basmati|salvaje)/.test(q)) {
+    if (/\bblanco\b/.test(n)) b += 2;
+    if (/(integral|yamani|salvaje)/.test(n)) b -= 1;
+  }
+  // "fideos/pasta" sin tipo → trigo, NO sin tacc / arroz / soja
+  if (/\b(fideos?|pasta|tallarines?)\b/.test(q) && !/(sin tacc|arroz|soja)/.test(q)) {
+    if (/sin tacc|arroz|soja|legumbre/.test(n)) b -= 2;
+  }
+  return b;
 }
 
-export async function resolveFood(rawQuery: string): Promise<ResolvedFood | null> {
-  const { query: noState, state } = extractState(rawQuery);
-  const { query, note } = applyVarietyDefault(noState);
+export async function resolveFood(rawQuery: string): Promise<ResolveOutcome> {
+  const { query, state } = extractState(rawQuery);
 
-  const matches = await foodRepo.searchFood(query, 12);
-  if (matches.length === 0) {
-    // reintento sin el enriquecimiento de variedad
-    const fallback = await foodRepo.searchFood(noState, 12);
-    if (fallback.length === 0) return null;
-    matches.push(...fallback);
-  }
+  const cands = await foodRepo.searchFoodCandidates(query, 25);
+  if (cands.length === 0) return { kind: "none" };
 
-  const ranked = [...matches].sort((a, b) => score(b, query) - score(a, query));
-  const best = ranked[0];
+  const ranked = rankByCoverage(query, cands);
 
-  const crudoFood = ranked.find((c) => classifyState(c.name) === "crudo");
-  const cocidoFood = ranked.find((c) => classifyState(c.name) === "cocido");
+  // Plausibles: cobertura mínima + sacar SIN TACC salvo que lo pidan.
+  const askedSinTacc = /sin tacc/.test(strip(query));
+  let plausible = ranked
+    .filter((r) => r.coverage >= COVERAGE_FLOOR)
+    .filter((r) => askedSinTacc || !/sin tacc/.test(strip(r.item.name)));
 
-  // Estado explícito en el texto → elegir esa variante.
+  if (plausible.length === 0) return { kind: "none" };
+
+  // Reordenar por [cobertura, sesgo, nombre corto].
+  plausible = plausible.sort(
+    (a, b) =>
+      b.coverage - a.coverage ||
+      bias(query, b.item.name) - bias(query, a.item.name) ||
+      a.item.name.length - b.item.name.length,
+  );
+
+  // Si hay estado explícito, filtrar a esa variante (si existe en nombres).
+  let pool = plausible;
   if (state) {
-    const wanted = state === "crudo" ? crudoFood : cocidoFood;
-    return {
-      food: wanted ?? best,
-      state,
-      note,
-      ambiguousState: false,
-      crudoFood,
-      cocidoFood,
-    };
+    const byState = plausible.filter((r) => classifyState(r.item.name) === state);
+    if (byState.length > 0) pool = byState;
   }
 
-  // Sin estado: ambiguo solo si el alimento es "stateful" y existen
-  // ambas variantes con score decente.
-  const ambiguous =
-    isStatefulFood(query) &&
-    !!crudoFood &&
-    !!cocidoFood &&
-    crudoFood.id !== cocidoFood.id;
+  const exact = pool.filter((r) => r.coverage >= 0.999);
 
+  // Un único match exacto domina → resolver sin preguntar.
+  if (exact.length === 1) {
+    return { kind: "resolved", food: exact[0].item, state: state ?? classifyState(exact[0].item.name) };
+  }
+  // Un solo plausible → resolver.
+  if (pool.length === 1) {
+    return { kind: "resolved", food: pool[0].item, state: state ?? classifyState(pool[0].item.name) };
+  }
+
+  // Varias variedades/estados → preguntar con opciones reales.
   return {
-    food: best,
-    state: classifyState(best.name),
-    note,
-    ambiguousState: ambiguous,
-    crudoFood,
-    cocidoFood,
+    kind: "ambiguous",
+    options: pool.slice(0, MAX_OPTIONS).map((r) => r.item),
+    state,
+    query,
   };
 }

@@ -1,16 +1,15 @@
 import * as foodRepo from "../../repositories/food.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
-import { parseMealText } from "../../services/gemini.service.js";
+import { splitMealText } from "../../services/gemini.service.js";
 import { canUseAi, recordAiUse } from "../../services/ai-budget.service.js";
 import { logger } from "../../config/logger.js";
 import { parseMealItems, type ParsedItem } from "./meal-items.js";
-import { resolveFood, type FoodState } from "./food-resolve.js";
-import type { FoodMatch } from "../../repositories/food.repo.js";
+import { resolveFood, classifyState, type FoodState } from "./food-resolve.js";
+import type { FoodItem, FoodCandidate } from "../../repositories/food.repo.js";
+import type { MealStateClarify, PendingMeal } from "../session.store.js";
 
-/** Threshold de similarity para confiar en el match SARA. */
 const MATCH_CONFIDENCE_THRESHOLD = 0.5;
 
-/** Fallback de gramos por medida casera cuando no hay fila en food_portions. */
 const GENERIC_MEASURE_G: Record<string, number> = {
   plato: 250, "plato playo": 230, "plato hondo": 300,
   cucharada: 15, "cucharada sopera": 15, cucharadita: 5,
@@ -27,18 +26,27 @@ export interface ParsedMealItem {
   fat_g: number;
   food_item_id: string | null;
   matched_db_name: string | null;
-  /** Aviso al usuario ("Asumí arroz blanco…"). */
   note?: string | null;
   state?: FoodState;
 }
 
-export interface StateClarify {
-  /** índice del item ambiguo dentro de `items`. */
-  item_index: number;
-  food_label: string;
-  grams: number;
-  crudo: { food_item_id: string; kcal: number; protein_g: number; carbs_g: number; fat_g: number };
-  cocido: { food_item_id: string; kcal: number; protein_g: number; carbs_g: number; fat_g: number };
+export interface ClarifyOption {
+  food_item_id: string;
+  name: string;
+}
+
+/** Un item que quedó pendiente de desambiguar (varias opciones en la DB). */
+export interface ClarifyEntry {
+  /** lo necesitamos para recalcular gramos tras la elección. */
+  item: ParsedItem;
+  options: ClarifyOption[];
+}
+
+export interface FoodClarify {
+  resolved: ParsedMealItem[];
+  queue: ClarifyEntry[];
+  raw_input: string;
+  is_estimate: boolean;
 }
 
 export interface ParseResult {
@@ -46,20 +54,24 @@ export interface ParseResult {
   totals: { kcal: number; protein: number; carbs: number; fat: number };
   is_estimate: boolean;
   confidence: number;
-  source: "alias" | "quick" | "descriptive" | "ai" | "none" | "needs_clarification" | "needs_state_clarification";
+  source:
+    | "alias" | "quick" | "descriptive" | "ai" | "none"
+    | "needs_clarification" | "needs_food_clarification"
+    | "needs_state_clarification";
   frequent_meal_id?: string;
   food_hint?: string;
-  /** Presente solo si source === 'needs_state_clarification'. */
-  state_clarify?: StateClarify;
-  /** raw input (para reprocesar tras aclarar estado). */
+  food_clarify?: FoodClarify;
+  state_clarify?: MealStateClarify;
   raw_input?: string;
 }
 
 /**
- * Parser de comidas en cascada:
- *   1) ALIAS  — match exacto contra frequent_meals.alias.
- *   2) QUICK  — split multi-item + patrones + food_portions + SARA.
- *   3) AI     — Gemini parsea texto libre + match SARA.
+ * Parser de comidas. La verdad es SIEMPRE food_items (SARA2) + food_portions.
+ *   1) ALIAS — frequent_meals del user.
+ *   2) QUICK — regex split + resolver determinístico (coverage).
+ *   3) AI    — Gemini SOLO separa el texto; el resolver es el mismo.
+ * Si un alimento es ambiguo (varias variedades/estados en la DB) → se
+ * pregunta con lista numerada (no se adivina, la AI no inventa macros).
  */
 export async function parseMeal(
   userId: string,
@@ -70,20 +82,16 @@ export async function parseMeal(
   const alias = await tryAlias(userId, normalized);
   if (alias) return alias;
 
-  const quick = await tryQuick(normalized, rawText);
-  if (quick && (quick.items.length > 0 || quick.source === "needs_state_clarification")) {
-    return quick;
+  const quickItems = parseMealItems(normalized);
+  if (quickItems.length > 0) {
+    const res = await resolveItems(quickItems, rawText, "quick");
+    if (res.items.length > 0 || res.source === "needs_food_clarification") return res;
   }
 
-  // Nada resuelto por quick: pedir aclaración (salvo segundo intento) o AI.
-  if (!opts.skipClarification && !/\d/.test(normalized)) {
+  if (!opts.skipClarification && !/\d/.test(normalized) && quickItems.length === 0) {
     return {
-      items: [],
-      totals: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
-      is_estimate: false,
-      confidence: 0,
-      source: "needs_clarification",
-      food_hint: extractFoodHint(normalized),
+      items: [], totals: zero(), is_estimate: false, confidence: 0,
+      source: "needs_clarification", food_hint: extractFoodHint(normalized),
     };
   }
 
@@ -94,19 +102,17 @@ const MEAL_VERB_PREFIX =
   /^(?:me\s+)?(?:comi|come|comer|cene|ceno|cenar|desayune|desayuno|desayunar|almorce|almorzo|almorzar|merende|merendar|tome|tomo|tomar|probé|probe|probar)\s+/;
 
 function extractFoodHint(normalized: string): string {
-  const stripped = normalized.replace(MEAL_VERB_PREFIX, "").trim();
-  return stripped || normalized;
+  return normalized.replace(MEAL_VERB_PREFIX, "").trim() || normalized;
 }
 
-// ────────────────────────────────────────────────────────────
-// 1) ALIAS
-// ────────────────────────────────────────────────────────────
+const zero = () => ({ kcal: 0, protein: 0, carbs: 0, fat: 0 });
+
+// ── 1) ALIAS ────────────────────────────────────────────────
 async function tryAlias(userId: string, normalized: string): Promise<ParseResult | null> {
   const candidates = [normalized, normalized.split(" ").slice(0, 3).join(" ")];
   for (const candidate of candidates) {
     const match = await frequentMealRepo.findByAlias(userId, candidate);
     if (!match) continue;
-
     const items: ParsedMealItem[] = (match.ingredients as any[]).map((ing) => ({
       name: ing.name,
       grams: ing.grams ?? 0,
@@ -117,28 +123,21 @@ async function tryAlias(userId: string, normalized: string): Promise<ParseResult
       food_item_id: ing.food_item_id ?? null,
       matched_db_name: null,
     }));
-
     return {
       items,
       totals: {
-        kcal: match.total_kcal,
-        protein: match.total_protein_g,
-        carbs: match.total_carbs_g,
-        fat: match.total_fat_g,
+        kcal: match.total_kcal, protein: match.total_protein_g,
+        carbs: match.total_carbs_g, fat: match.total_fat_g,
       },
-      is_estimate: false,
-      confidence: 1.0,
-      source: "alias",
+      is_estimate: false, confidence: 1.0, source: "alias",
       frequent_meal_id: match.id,
     };
   }
   return null;
 }
 
-// ────────────────────────────────────────────────────────────
-// 2) QUICK — split + patrones + food_portions
-// ────────────────────────────────────────────────────────────
-function macros(food: FoodMatch, grams: number) {
+// ── macros / gramos ─────────────────────────────────────────
+export function macros(food: Pick<FoodItem, "kcal_per_100g" | "protein_per_100g" | "carbs_per_100g" | "fat_per_100g">, grams: number) {
   const f = grams / 100;
   return {
     kcal: food.kcal_per_100g * f,
@@ -149,15 +148,13 @@ function macros(food: FoodMatch, grams: number) {
 }
 
 /** Resuelve gramos según el modo del item + food_portions. */
-async function resolveGrams(
+export async function resolveGrams(
   item: ParsedItem,
   foodId: string,
   standardPortionG: number | null,
   state: FoodState,
 ): Promise<{ grams: number; estimate: boolean }> {
-  if (item.mode === "grams") {
-    return { grams: item.qty, estimate: false };
-  }
+  if (item.mode === "grams") return { grams: item.qty, estimate: false };
 
   if (item.mode === "measure" && item.measure) {
     const p = await foodRepo.findPortionByMeasure(foodId, item.measure, state ?? undefined);
@@ -166,200 +163,152 @@ async function resolveGrams(
     if (generic) return { grams: Math.round(item.qty * generic), estimate: true };
   }
 
-  // units / bare → porción default del alimento
   const def = await foodRepo.getDefaultPortion(foodId, state ?? undefined);
-  if (def) {
-    return { grams: Math.round(item.qty * def.portion_grams), estimate: item.mode === "bare" };
-  }
-  if (standardPortionG) {
-    return { grams: Math.round(item.qty * standardPortionG), estimate: true };
-  }
+  if (def) return { grams: Math.round(item.qty * def.portion_grams), estimate: item.mode === "bare" };
+  if (standardPortionG) return { grams: Math.round(item.qty * standardPortionG), estimate: true };
   return { grams: Math.round(item.qty * 100), estimate: true };
 }
 
-async function tryQuick(normalized: string, rawText: string): Promise<ParseResult | null> {
-  const parsed = parseMealItems(normalized);
-  if (parsed.length === 0) return null;
+/** Construye un ParsedMealItem ya resuelto (food elegido). */
+export async function buildItem(
+  pi: ParsedItem,
+  food: FoodItem,
+  state: FoodState,
+): Promise<{ entry: ParsedMealItem; estimate: boolean }> {
+  const st = state ?? classifyState(food.name);
+  const { grams, estimate } = await resolveGrams(pi, food.id, food.standard_portion_g, st);
+  const m = macros(food, grams);
+  return {
+    entry: {
+      name: pi.food, grams,
+      kcal: m.kcal, protein_g: m.protein_g, carbs_g: m.carbs_g, fat_g: m.fat_g,
+      food_item_id: food.id, matched_db_name: food.name, state: st,
+    },
+    estimate,
+  };
+}
 
-  const items: ParsedMealItem[] = [];
+// ── 2) RESOLVER (compartido quick + AI) ─────────────────────
+async function resolveItems(
+  items: ParsedItem[],
+  rawText: string,
+  source: "quick" | "ai",
+): Promise<ParseResult> {
+  const resolved: ParsedMealItem[] = [];
+  const queue: ClarifyEntry[] = [];
   let isEstimate = false;
-  let stateClarify: StateClarify | undefined;
 
-  for (const it of parsed) {
-    const resolved = await resolveFood(it.food);
-    if (!resolved || resolved.food.match_score < MATCH_CONFIDENCE_THRESHOLD) {
-      // alimento no reconocido: lo dejamos como estimación sin macros
-      // solo si traía cantidad explícita; si era "bare", lo dropeamos.
-      if (it.mode === "grams") {
-        items.push({
-          name: it.food, grams: it.qty,
-          kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0,
-          food_item_id: null, matched_db_name: null,
-        });
-        isEstimate = true;
-      }
-      continue;
-    }
+  for (const pi of items) {
+    const r = await resolveFood(pi.food);
 
-    const { food } = resolved;
-    const { grams, estimate } = await resolveGrams(
-      it, food.id, food.standard_portion_g, resolved.state,
-    );
-    if (estimate) isEstimate = true;
-
-    const m = macros(food, grams);
-    const idx = items.length;
-    items.push({
-      name: it.food,
-      grams,
-      kcal: m.kcal,
-      protein_g: m.protein_g,
-      carbs_g: m.carbs_g,
-      fat_g: m.fat_g,
-      food_item_id: food.id,
-      matched_db_name: food.name,
-      note: resolved.note,
-      state: resolved.state,
-    });
-
-    // Ambigüedad crudo/cocido: solo preguntamos por el PRIMER item ambiguo
-    // (y solo si es el único item del mensaje, para no encadenar preguntas).
-    if (
-      resolved.ambiguousState &&
-      resolved.crudoFood &&
-      resolved.cocidoFood &&
-      !stateClarify &&
-      parsed.length === 1
-    ) {
-      const cr = macros(resolved.crudoFood, grams);
-      const co = macros(resolved.cocidoFood, grams);
-      stateClarify = {
-        item_index: idx,
-        food_label: it.food,
-        grams,
-        crudo: { food_item_id: resolved.crudoFood.id, ...cr },
-        cocido: { food_item_id: resolved.cocidoFood.id, ...co },
-      };
+    if (r.kind === "resolved") {
+      const { entry, estimate } = await buildItem(pi, r.food, r.state);
+      if (estimate) isEstimate = true;
+      resolved.push(entry);
+    } else if (r.kind === "ambiguous") {
+      queue.push({
+        item: pi,
+        options: r.options.map((o: FoodCandidate) => ({ food_item_id: o.id, name: o.name })),
+      });
+    } else if (pi.mode === "grams") {
+      resolved.push({
+        name: pi.food, grams: pi.qty,
+        kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0,
+        food_item_id: null, matched_db_name: null,
+      });
+      isEstimate = true;
     }
   }
 
-  if (items.length === 0) return null;
-
-  if (stateClarify) {
+  if (queue.length > 0) {
     return {
-      items,
-      totals: sumTotals(items),
+      items: resolved,
+      totals: sumTotals(resolved),
+      is_estimate: isEstimate,
+      confidence: 0,
+      source: "needs_food_clarification",
+      food_clarify: { resolved, queue, raw_input: rawText, is_estimate: isEstimate },
+    };
+  }
+
+  if (resolved.length === 0) {
+    return { items: [], totals: zero(), is_estimate: false, confidence: 0, source: "none" };
+  }
+
+  // ── Deteccion crudo/cocido — si un item resolvió pero tiene ambas
+  //    variantes en la DB, preguntar al user.
+  const sc = await detectStateClarify(resolved);
+  if (sc) {
+    return {
+      items: resolved,
+      totals: sumTotals(resolved),
       is_estimate: isEstimate,
       confidence: 0,
       source: "needs_state_clarification",
-      state_clarify: stateClarify,
+      state_clarify: sc,
       raw_input: rawText,
     };
   }
 
-  const allMatched = items.every((i) => i.matched_db_name);
+  const allMatched = resolved.every((i) => i.matched_db_name);
   const confidence = allMatched && !isEstimate ? 0.9 : allMatched ? 0.8 : 0.65;
-  return finalize(items, isEstimate, confidence, "quick");
+  return finalize(resolved, isEstimate, confidence, source);
 }
 
 /**
- * Recalcula un item tras aclarar crudo/cocido. Lo llama el handler con
- * la respuesta del usuario.
+ * Aplica la elección del usuario sobre el item ambiguo `entry`.
+ * Devuelve el ParsedMealItem calculado (macros desde SARA2).
  */
-export async function applyStateChoice(
-  items: ParsedMealItem[],
-  clarify: StateClarify,
-  choice: "crudo" | "cocido",
-): Promise<{ items: ParsedMealItem[]; totals: ParseResult["totals"] }> {
-  const pick = clarify[choice];
-  const food = await foodRepo.getFoodById(pick.food_item_id);
-  const next = items.map((it, i) =>
-    i === clarify.item_index
-      ? {
-          ...it,
-          kcal: pick.kcal,
-          protein_g: pick.protein_g,
-          carbs_g: pick.carbs_g,
-          fat_g: pick.fat_g,
-          food_item_id: pick.food_item_id,
-          matched_db_name: food?.name ?? it.matched_db_name,
-          state: choice,
-          note: null,
-        }
-      : it,
-  );
-  return { items: next, totals: sumTotals(next) };
+export async function applyFoodChoice(
+  entry: ClarifyEntry,
+  option: ClarifyOption,
+): Promise<ParsedMealItem | null> {
+  const food = await foodRepo.getFoodById(option.food_item_id);
+  if (!food) return null;
+  const { entry: built } = await buildItem(entry.item, food, classifyState(food.name));
+  return built;
 }
 
-// ────────────────────────────────────────────────────────────
-// 3) AI fallback
-// ────────────────────────────────────────────────────────────
+// ── 3) AI fallback (SOLO split, sin macros) ─────────────────
 async function tryAi(rawText: string, userId: string): Promise<ParseResult> {
   if (!canUseAi(userId)) {
-    logger.warn("ai budget exceeded — skipping parseMealText", { userId });
-    return emptyResult();
+    logger.warn("ai budget exceeded — skipping splitMealText", { userId });
+    return { items: [], totals: zero(), is_estimate: false, confidence: 0, source: "none" };
   }
   recordAiUse(userId);
-  const parsed = await parseMealText(rawText);
-  if (!parsed || parsed.length === 0) return emptyResult();
-
-  const items: ParsedMealItem[] = [];
-  let isEstimate = false;
-
-  for (const item of parsed) {
-    const resolved = await resolveFood(item.name);
-    let kcal = item.kcal;
-    let prot = item.protein_g;
-    let carbs = item.carbs_g;
-    let fat = item.fat_g;
-    let dbId: string | null = null;
-    let dbName: string | null = null;
-
-    if (resolved && resolved.food.match_score >= MATCH_CONFIDENCE_THRESHOLD) {
-      const grams = item.grams > 0 ? item.grams : (resolved.food.standard_portion_g ?? 100);
-      const m = macros(resolved.food, grams);
-      kcal = m.kcal; prot = m.protein_g; carbs = m.carbs_g; fat = m.fat_g;
-      dbId = resolved.food.id;
-      dbName = resolved.food.name;
-      if (resolved.food.match_score < 0.85) isEstimate = true;
-    } else {
-      isEstimate = true;
-    }
-    if (item.is_estimate) isEstimate = true;
-
-    items.push({
-      name: item.name,
-      grams: item.grams,
-      kcal, protein_g: prot, carbs_g: carbs, fat_g: fat,
-      food_item_id: dbId,
-      matched_db_name: dbName,
-    });
+  const split = await splitMealText(rawText);
+  if (!split || split.length === 0) {
+    return { items: [], totals: zero(), is_estimate: false, confidence: 0, source: "none" };
   }
 
-  const matchedRatio = items.filter((i) => i.matched_db_name).length / Math.max(items.length, 1);
-  const confidence = isEstimate ? 0.5 + matchedRatio * 0.2 : 0.8;
-  return finalize(items, isEstimate, confidence, "ai");
-}
+  const items: ParsedItem[] = split.map((s) => {
+    const mode: ParsedItem["mode"] =
+      s.unit === "g" ? "grams" :
+      s.unit === "units" ? "units" :
+      s.unit === "measure" ? "measure" :
+      s.qty != null ? "units" : "bare";
+    const food = s.state ? `${s.food} ${s.state}` : s.food;
+    return {
+      raw: s.food,
+      mode,
+      qty: s.qty ?? 1,
+      measure: s.measure ?? undefined,
+      food,
+    };
+  });
 
-function emptyResult(): ParseResult {
-  return {
-    items: [],
-    totals: { kcal: 0, protein: 0, carbs: 0, fat: 0 },
-    is_estimate: false,
-    confidence: 0,
-    source: "none",
-  };
+  return resolveItems(items, rawText, "ai");
 }
 
 function sumTotals(items: ParsedMealItem[]) {
   return items.reduce(
-    (acc, it) => ({
-      kcal: acc.kcal + it.kcal,
-      protein: acc.protein + it.protein_g,
-      carbs: acc.carbs + it.carbs_g,
-      fat: acc.fat + it.fat_g,
+    (a, it) => ({
+      kcal: a.kcal + it.kcal,
+      protein: a.protein + it.protein_g,
+      carbs: a.carbs + it.carbs_g,
+      fat: a.fat + it.fat_g,
     }),
-    { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+    zero(),
   );
 }
 
@@ -371,3 +320,81 @@ function finalize(
 ): ParseResult {
   return { items, totals: sumTotals(items), is_estimate: isEstimate, confidence, source };
 }
+
+// ── Deteccion de ambigüedad crudo/cocido ─────────────────────
+// Busca el primer item resuelto cuyo alimento tiene AMBAS variantes
+// (crudo+cocido) en la DB y el usuario NO especificó estado.
+async function detectStateClarify(
+  items: ParsedMealItem[],
+): Promise<MealStateClarify | null> {
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it.food_item_id || it.state) continue; // ya tiene estado o sin match
+
+    const food = await foodRepo.getFoodById(it.food_item_id);
+    if (!food) continue;
+
+    // Buscar la variante opuesta por nombre base (ej: "Arroz, blanco" → crudo/cocido)
+    const nameBase = food.name.replace(/,?\s*(crud[oa]s?|cocid[oa]s?|hervid[oa]s?)\b.*/i, "").trim();
+    const cands = await foodRepo.searchFoodCandidates(nameBase, 10);
+
+    const crudoItem = cands.find((c) => classifyState(c.name) === "crudo");
+    const cocidoItem = cands.find((c) => classifyState(c.name) === "cocido");
+
+    if (crudoItem && cocidoItem) {
+      const grams = it.grams;
+      const f = grams / 100;
+      return {
+        item_index: i,
+        food_label: nameBase || food.name,
+        grams,
+        crudo: {
+          food_item_id: crudoItem.id,
+          kcal: crudoItem.kcal_per_100g * f,
+          protein_g: crudoItem.protein_per_100g * f,
+          carbs_g: crudoItem.carbs_per_100g * f,
+          fat_g: crudoItem.fat_per_100g * f,
+        },
+        cocido: {
+          food_item_id: cocidoItem.id,
+          kcal: cocidoItem.kcal_per_100g * f,
+          protein_g: cocidoItem.protein_per_100g * f,
+          carbs_g: cocidoItem.carbs_per_100g * f,
+          fat_g: cocidoItem.fat_per_100g * f,
+        },
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Aplica la elección crudo/cocido del usuario sobre el item ambiguo.
+ * Recalcula macros del item con la variante elegida.
+ */
+export async function applyStateChoice(
+  items: PendingMeal["parsed_items"],
+  clarify: MealStateClarify,
+  choice: "crudo" | "cocido",
+): Promise<{ items: ParsedMealItem[]; totals: ReturnType<typeof sumTotals> }> {
+  const variant = choice === "crudo" ? clarify.crudo : clarify.cocido;
+  const updated = items.map((it, idx) => {
+    if (idx !== clarify.item_index) return it;
+    return {
+      ...it,
+      food_item_id: variant.food_item_id,
+      kcal: variant.kcal,
+      protein_g: variant.protein_g,
+      carbs_g: variant.carbs_g,
+      fat_g: variant.fat_g,
+      state: choice as FoodState,
+    };
+  });
+  return { items: updated, totals: sumTotals(updated) };
+}
+
+export type { PendingMeal };
+// Re-export for consumers that need the clarify entry type
+export type { MealStateClarify };
+
+export { MATCH_CONFIDENCE_THRESHOLD };
