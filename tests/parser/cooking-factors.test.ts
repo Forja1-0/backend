@@ -10,8 +10,12 @@ describe("cooking-factors", () => {
     expect(rawToCooked("Arroz blanco crudo", 70)).toBe(230);
   });
 
-  it("fideos secos 100g crudo → ~270g cocido", () => {
-    expect(rawToCooked("Fideos secos de trigo", 100)).toBe(270);
+  it("fideos secos genéricos 100g → 250g cocido (factor moñitos 2.5)", () => {
+    expect(rawToCooked("Fideos secos de trigo", 100)).toBe(250);
+  });
+
+  it("tallarines secos 100g → 270g cocido (factor 2.7)", () => {
+    expect(rawToCooked("Fideos tallarines secos", 100)).toBe(270);
   });
 
   it("ñoquis factor 1.2", () => {
