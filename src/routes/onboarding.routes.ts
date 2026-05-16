@@ -11,6 +11,8 @@ import {
 import { planFileUpload } from "../middleware/upload.js";
 import { BadRequest, NotFound } from "../utils/errors.js";
 import { logger } from "../config/logger.js";
+import { sendText } from "../services/evolution.service.js";
+import * as T from "../bot/personality/templates.js";
 
 export const onboardingRoutes = Router();
 
@@ -183,6 +185,21 @@ onboardingRoutes.post("/:userId/consent", async (req, res, next) => {
 
     const consent = await repo.saveConsent(userId, data, ip, userAgent);
     logger.info("consent saved", { userId });
+
+    // Welcome / tutorial inicial via WhatsApp. Best-effort: si falla (numero
+    // invalido, Evolution caido, usuario no escribio nunca al bot) no rompemos
+    // la respuesta — el usuario igual puede arrancar mandando el primer msg.
+    const dest = user.wa_chat_id ?? user.phone_wa;
+    if (dest) {
+      try {
+        await sendText(dest, T.welcome(user.name));
+        logger.info("welcome sent", { userId, dest });
+      } catch (err) {
+        logger.warn("welcome send failed", { userId, dest, err });
+      }
+    } else {
+      logger.info("welcome skipped: no destination", { userId });
+    }
 
     res.json({ ok: true, consented_at: consent.consented_at });
   } catch (err) {

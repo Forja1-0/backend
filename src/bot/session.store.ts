@@ -23,6 +23,14 @@ export interface PendingMeal {
   raw_input: string;
 }
 
+export interface MealStateClarify {
+  item_index: number;
+  food_label: string;
+  grams: number;
+  crudo: { food_item_id: string; kcal: number; protein_g: number; carbs_g: number; fat_g: number };
+  cocido: { food_item_id: string; kcal: number; protein_g: number; carbs_g: number; fat_g: number };
+}
+
 export type SessionState =
   | { flow: "rpe_capture"; training_log_id: string }
   | { flow: "checkin_nutrition"; step: 1 }
@@ -30,6 +38,13 @@ export type SessionState =
   | { flow: "checkin_pain"; step: 3; nutrition_ok: boolean; sleep: number }
   | { flow: "meal_confirm"; meal: PendingMeal }
   | { flow: "meal_clarify"; raw_original: string; normalized_original: string; food_hint: string }
+  | {
+      flow: "meal_state_clarify";
+      items: PendingMeal["parsed_items"];
+      clarify: MealStateClarify;
+      is_estimate: boolean;
+      raw_input: string;
+    }
   | { flow: "baja_confirm" };
 
 const store = new Map<string, SessionState>();

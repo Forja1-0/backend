@@ -91,3 +91,77 @@ export async function getFoodById(id: string): Promise<FoodItem | null> {
   );
   return rows[0] ?? null;
 }
+
+// ────────────────────────────────────────────────────────────
+// FOOD_PORTIONS — porciones caseras por alimento (ver migration 005)
+// ────────────────────────────────────────────────────────────
+
+export interface FoodPortion {
+  id: string;
+  food_id: string;
+  portion_name: string;
+  portion_grams: number;
+  /** 'crudo' | 'cocido' | null (no aplica). */
+  portion_state: string | null;
+  is_default: boolean;
+  source: string;
+  notes: string | null;
+}
+
+/** Todas las porciones de un alimento, default primero. */
+export async function getPortionsForFood(foodId: string): Promise<FoodPortion[]> {
+  const { rows } = await query<FoodPortion>(
+    `SELECT id, food_id, portion_name, portion_grams::float8 AS portion_grams,
+            portion_state, is_default, source, notes
+     FROM food_portions
+     WHERE food_id = $1
+     ORDER BY is_default DESC, portion_grams ASC`,
+    [foodId],
+  );
+  return rows;
+}
+
+/**
+ * Porcion default de un alimento. Si se pasa `state` ('crudo'/'cocido'),
+ * prioriza la default de ese estado; si no hay, cae a la default sin estado.
+ */
+export async function getDefaultPortion(
+  foodId: string,
+  state?: "crudo" | "cocido" | null,
+): Promise<FoodPortion | null> {
+  const { rows } = await query<FoodPortion>(
+    `SELECT id, food_id, portion_name, portion_grams::float8 AS portion_grams,
+            portion_state, is_default, source, notes
+     FROM food_portions
+     WHERE food_id = $1 AND is_default = true
+       AND ($2::text IS NULL OR portion_state = $2 OR portion_state IS NULL)
+     ORDER BY (portion_state = $2) DESC NULLS LAST
+     LIMIT 1`,
+    [foodId, state ?? null],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Busca una porcion por medida casera ("plato", "feta", "cucharada",
+ * "pote", "rodaja"...). Match por substring sobre portion_name.
+ * Si hay estado, lo respeta; si no, prioriza la default.
+ */
+export async function findPortionByMeasure(
+  foodId: string,
+  measure: string,
+  state?: "crudo" | "cocido" | null,
+): Promise<FoodPortion | null> {
+  const { rows } = await query<FoodPortion>(
+    `SELECT id, food_id, portion_name, portion_grams::float8 AS portion_grams,
+            portion_state, is_default, source, notes
+     FROM food_portions
+     WHERE food_id = $1
+       AND portion_name ILIKE '%' || $2 || '%'
+       AND ($3::text IS NULL OR portion_state = $3 OR portion_state IS NULL)
+     ORDER BY (portion_state = $3) DESC NULLS LAST, is_default DESC
+     LIMIT 1`,
+    [foodId, measure, state ?? null],
+  );
+  return rows[0] ?? null;
+}

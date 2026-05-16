@@ -39,16 +39,67 @@ export function gratitude(): string {
 export function help(name: string | null): string {
   const n = firstName(name);
   return (
-    `*¿Qué puedo hacer${n ? ", " + n : ""}?*\n\n` +
+    `*¿Cómo me usás${n ? ", " + n : ""}?*\n\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `🧠 *LO QUE YA SÉ DE VOS*\n` +
+    `Tengo tu perfil completo del onboarding: objetivo, plan de entrenos con horarios, targets de kcal y macros, restricciones, lesiones, comidas frecuentes. *No tenés que recargar nada.*\n\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `💬 *LO QUE ME PODÉS DECIR*\n\n` +
     `🥗 *Registrar comida*\n` +
-    `   _Ej: "comí 200g de pollo y arroz", "desayuno 1"_\n\n` +
+    `   _"comí 200g de pollo y arroz"_\n` +
+    `   _"desayuno 1" (si la cargaste como frecuente)_\n\n` +
     `💪 *Registrar entrenamiento*\n` +
-    `   _Ej: "completé piernas", "terminé el running"_\n\n` +
+    `   _"completé piernas", "listo el gym"_\n` +
+    `   Te pregunto el RPE (1 a 10). Respondé con el número.\n\n` +
+    `⏭️ *Saltear o cambiar*\n` +
+    `   _"hoy no entreno", "me salto"_\n\n` +
     `📊 *Consultar*\n` +
-    `   _"cuánta prote me falta", "cómo voy esta semana"_\n\n` +
-    `🤕 *Avisar lesión o desliz*\n` +
-    `   _Te ayudo a ajustar el plan_\n\n` +
-    `Hablame normal, yo me arreglo.`
+    `   _"qué me toca hoy?"_\n` +
+    `   _"cuánta prote me falta?"_\n` +
+    `   _"cómo voy esta semana?"_\n` +
+    `   _"mi perfil"_\n\n` +
+    `🤕 *Lesión / enfermedad / desliz*\n` +
+    `   _"me lesioné la rodilla"_, _"estoy enfermo"_, _"me comí 3 hamburguesas"_\n` +
+    `   Ajusto el plan o suspendo recordatorios.\n\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `🔔 *LO QUE HAGO SOLO*\n\n` +
+    `• *Recordatorio matutino* (lun a sáb, 6 AM) con la sesión del día — *no me tenés que avisar cuándo entrenás, ya lo sé*\n` +
+    `• *Check-in nocturno* — nutrición, sueño, dolor\n` +
+    `• *Resumen semanal* los domingos\n` +
+    `• Respeto los protocolos de rehab y alertas que cargó tu coach\n\n` +
+    `━━━━━━━━━━━━━━━\n` +
+    `🔧 *RECONFIGURAR*\n` +
+    `Plan nuevo del coach → subilo de nuevo en el perfil.\n` +
+    `Cambio puntual → decímelo (_"ahora peso 78"_, _"ya no como gluten"_).\n` +
+    `Baja → escribime *baja*.\n\n` +
+    `Hablame natural. No hay comandos rígidos.`
+  );
+}
+
+/**
+ * Mensaje de bienvenida que se manda automaticamente cuando el usuario termina
+ * el onboarding (POST /consent). Es el "tutorial" inicial del bot. Mas corto
+ * que help() porque va sin pedirlo y queremos no abrumar.
+ */
+export function welcome(name: string | null): string {
+  const n = firstName(name);
+  return (
+    `🟢 *Bienvenido${n ? ", " + n : ""}.*\n` +
+    `Soy *Forja*. Desde acá entrenamos juntos todos los días.\n\n` +
+    `🧠 *Ya tengo todo:* tu objetivo, tu plan de entrenos con horarios, tus targets de kcal/macros, tus restricciones y tus comidas frecuentes. No tenés que recargar nada.\n\n` +
+    `🔔 *Yo me encargo de avisarte:*\n` +
+    `• Cada mañana (lun a sáb, 6 AM) te paso qué te toca y a qué hora\n` +
+    `• A la noche te hago un check-in rápido (nutri, sueño, dolor)\n` +
+    `• Los domingos, resumen semanal\n\n` +
+    `💬 *Vos me hablás natural cuando pase algo:*\n` +
+    `_"comí 200g de pollo"_ → registro macros\n` +
+    `_"completé piernas"_ → te pido RPE\n` +
+    `_"qué me toca hoy?"_ → te digo la sesión\n` +
+    `_"me lesioné la rodilla"_ → ajusto el plan\n` +
+    `_"hoy no entreno"_ → anoto y mañana retomamos\n\n` +
+    `No hay comandos rígidos. Hablame como a un coach.\n` +
+    `Si te perdés, escribime *ayuda* y te paso el menú completo.\n\n` +
+    `Empezamos. 💪`
   );
 }
 
@@ -123,7 +174,35 @@ export interface MealSummaryItem {
   name: string;
   grams: number;
   kcal: number;
+  protein_g?: number;
+  carbs_g?: number;
+  fat_g?: number;
   matched_db_name?: string | null;
+  note?: string | null;
+  state?: "crudo" | "cocido" | null;
+}
+
+/** Entero con separador de miles es-AR ("1239" → "1.239"). */
+const n0 = (x: number): string => Math.round(x).toLocaleString("es-AR");
+
+function itemLine(it: MealSummaryItem): string {
+  const nm = it.matched_db_name ?? it.name;
+  const st = it.state ? ` (${it.state})` : "";
+  const qty = it.grams > 0 ? `${n0(it.grams)}g de ` : "";
+  const head = `• ${qty}${nm}${st} → ${n0(it.kcal)} kcal`;
+  const macro =
+    it.protein_g != null && it.carbs_g != null && it.fat_g != null
+      ? ` · P ${n0(it.protein_g)}g · C ${n0(it.carbs_g)}g · G ${n0(it.fat_g)}g`
+      : "";
+  const note = it.note ? `\n  _${it.note}_` : "";
+  return head + macro + note;
+}
+
+function totalLine(t: { kcal: number; protein: number; carbs: number; fat: number }): string {
+  return (
+    `\n*Total:* ${n0(t.kcal)} kcal · ` +
+    `P ${n0(t.protein)}g · C ${n0(t.carbs)}g · G ${n0(t.fat)}g`
+  );
 }
 
 export function mealRegistered(
@@ -131,18 +210,7 @@ export function mealRegistered(
   totals: { kcal: number; protein: number; carbs: number; fat: number },
   isEstimate: boolean,
 ): string {
-  const lines = ["✅ *Registrado.*\n"];
-  for (const it of items) {
-    const nm = it.matched_db_name ?? it.name;
-    const qty = it.grams > 0 ? `${it.grams}g de ` : "";
-    lines.push(`• ${qty}${nm} (${it.kcal} kcal)`);
-  }
-  lines.push(
-    `\n*Total:* ${Math.round(totals.kcal)} kcal · ` +
-    `P ${Math.round(totals.protein)}g · ` +
-    `C ${Math.round(totals.carbs)}g · ` +
-    `G ${Math.round(totals.fat)}g`,
-  );
+  const lines = ["✅ *Registrado.*\n", ...items.map(itemLine), totalLine(totals)];
   if (isEstimate) lines.push("\n_Valores estimados — si no es preciso, escribime *corregir*._");
   return lines.join("\n");
 }
@@ -151,15 +219,32 @@ export function mealConfirmAsk(
   items: MealSummaryItem[],
   totals: { kcal: number; protein: number; carbs: number; fat: number },
 ): string {
-  const lines = ["🤔 Detecté:\n"];
-  for (const it of items) {
-    const nm = it.matched_db_name ?? it.name;
-    const qty = it.grams > 0 ? `${it.grams}g de ` : "";
-    lines.push(`• ${qty}${nm}`);
-  }
-  lines.push(`\n~ *${Math.round(totals.kcal)} kcal* · P${Math.round(totals.protein)} C${Math.round(totals.carbs)} G${Math.round(totals.fat)}`);
-  lines.push("\n¿Lo guardo así? Respondé *sí* o *corregir*.");
-  return lines.join("\n");
+  return [
+    "🍽 Detecté:\n",
+    ...items.map(itemLine),
+    totalLine(totals),
+    "\n¿Lo guardo así? Respondé *sí* o *corregir*.",
+  ].join("\n");
+}
+
+export interface StateClarifyView {
+  food_label: string;
+  grams: number;
+  crudo: { kcal: number; protein_g: number; carbs_g: number; fat_g: number };
+  cocido: { kcal: number; protein_g: number; carbs_g: number; fat_g: number };
+}
+
+export function mealStateClarify(c: StateClarifyView): string {
+  const macro = (m: { kcal: number; protein_g: number; carbs_g: number; fat_g: number }) =>
+    `${n0(m.kcal)} kcal · P ${n0(m.protein_g)}g · C ${n0(m.carbs_g)}g · G ${n0(m.fat_g)}g`;
+  return [
+    `🤔 *${n0(c.grams)}g de ${c.food_label}* — ¿lo comiste *crudo* o ya *cocido*?`,
+    "",
+    `• Si crudo: ${macro(c.crudo)}`,
+    `• Si cocido: ${macro(c.cocido)}`,
+    "",
+    'Respondé "crudo" o "cocido".',
+  ].join("\n");
 }
 
 export function mealConfirmCancelled(): string {

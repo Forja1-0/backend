@@ -1,10 +1,16 @@
 import type { User } from "../../types/user.types.js";
-import { parseMeal, type ParseResult } from "../parser/meal-parser.js";
+import { parseMeal, applyStateChoice, type ParseResult } from "../parser/meal-parser.js";
 import * as mealRepo from "../../repositories/meal.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
 import { sendText } from "../../services/evolution.service.js";
-import { setSession, clearSession, type PendingMeal } from "../session.store.js";
+import {
+  setSession,
+  clearSession,
+  type PendingMeal,
+  type MealStateClarify,
+} from "../session.store.js";
 import { classify } from "../parser/intent-classifier.js";
+import { normalize } from "../parser/normalize.js";
 import * as T from "../personality/templates.js";
 import { logger } from "../../config/logger.js";
 
@@ -41,6 +47,18 @@ export async function handleMealLog(
       food_hint: result.food_hint ?? normalized,
     });
     await sendText(jid, T.mealClarify(result.food_hint ?? normalized));
+    return true;
+  }
+
+  if (result.source === "needs_state_clarification" && result.state_clarify) {
+    setSession(jid, {
+      flow: "meal_state_clarify",
+      items: result.items,
+      clarify: result.state_clarify as MealStateClarify,
+      is_estimate: result.is_estimate,
+      raw_input: result.raw_input ?? rawText,
+    });
+    await sendText(jid, T.mealStateClarify(result.state_clarify));
     return true;
   }
 
@@ -135,6 +153,44 @@ export async function handleMealClarify(
     ? T.mealRegisteredEstimated(result.items, result.totals)
     : T.mealRegistered(result.items, result.totals, result.is_estimate);
   await sendText(jid, message);
+}
+
+/**
+ * Respuesta del usuario al "¿crudo o cocido?" (flow meal_state_clarify).
+ * Recalcula el item ambiguo con la variante elegida y guarda.
+ */
+export async function handleMealStateClarify(
+  user: User,
+  answer: string,
+  session: {
+    items: PendingMeal["parsed_items"];
+    clarify: MealStateClarify;
+    is_estimate: boolean;
+    raw_input: string;
+  },
+): Promise<void> {
+  const jid = user.wa_chat_id!;
+  clearSession(jid);
+
+  const norm = normalize(answer);
+  const choice: "crudo" | "cocido" =
+    /\b(cocid|hervid|cocinad)/.test(norm) ? "cocido" :
+    /\bcrud/.test(norm) ? "crudo" :
+    "cocido"; // ambiguo → cocido (lo más frecuente al reportar comida hecha)
+
+  const { items, totals } = await applyStateChoice(
+    session.items,
+    session.clarify,
+    choice,
+  );
+  await persistMeal(user, session.raw_input, {
+    items,
+    totals,
+    is_estimate: session.is_estimate,
+    confidence: 1,
+    source: "quick",
+  });
+  await sendText(jid, T.mealRegistered(items, totals, session.is_estimate));
 }
 
 async function persistMeal(user: User, rawText: string, result: ParseResult): Promise<void> {

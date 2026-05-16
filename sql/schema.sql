@@ -236,6 +236,33 @@ CREATE INDEX idx_food_items_trgm ON food_items USING gin (name gin_trgm_ops);
 CREATE INDEX idx_food_items_category ON food_items (category);
 
 -- ============================================================
+-- 8b. FOOD_PORTIONS — porciones caseras por alimento
+-- Vincula food_items SARA2 con pesos reales de porciones naturales
+-- (unidad, feta, plato playo cocido, cucharada). El parser la usa
+-- para convertir "2 milanesas" -> 300g. Ver migration 005.
+-- Seedeada por scripts/seed-food-portions.mjs (resuelve food_id
+-- contra los nombres reales de food_items con el matching del parser).
+-- ============================================================
+CREATE TABLE food_portions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    food_id         UUID REFERENCES food_items(id) ON DELETE CASCADE,
+    food_query      TEXT NOT NULL,
+    portion_name    TEXT NOT NULL,
+    portion_grams   NUMERIC NOT NULL CHECK (portion_grams > 0),
+    portion_state   TEXT CHECK (portion_state IN ('crudo', 'cocido')),
+    is_default      BOOLEAN NOT NULL DEFAULT false,
+    source          TEXT NOT NULL,
+    notes           TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_food_portions_food
+  ON food_portions (food_id) WHERE food_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_food_portions_one_default
+  ON food_portions (food_id, COALESCE(portion_state, ''))
+  WHERE is_default = true AND food_id IS NOT NULL;
+
+-- ============================================================
 -- 9. MEAL_LOGS — Registro de cada comida
 -- ============================================================
 CREATE TABLE meal_logs (

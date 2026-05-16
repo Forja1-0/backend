@@ -6,7 +6,7 @@ import { logger } from "../config/logger.js";
 
 import { handleComplete, handleRpeResponse, handleSkip, handleQuery as handleTrainingQuery } from "./handlers/training.handler.js";
 import { handleCheckinResponse } from "./handlers/checkin.handler.js";
-import { handleMealLog, handleMealConfirm, handleMealClarify } from "./handlers/meal.handler.js";
+import { handleMealLog, handleMealConfirm, handleMealClarify, handleMealStateClarify } from "./handlers/meal.handler.js";
 import { handleNutritionQuery, handleProgressQuery } from "./handlers/query.handler.js";
 import { handleHelp, handleProfile, handleBaja, handleBajaConfirm } from "./handlers/command.handler.js";
 import { handleInjury, handleIllness, handleDesliz } from "./handlers/disruption.handler.js";
@@ -105,6 +105,9 @@ async function dispatchSession(
       );
     case "meal_clarify":
       await handleMealClarify(user, rawText, session);
+      return true;
+    case "meal_state_clarify":
+      await handleMealStateClarify(user, rawText, session);
       return true;
     case "meal_confirm": {
       const c = classify(rawText);

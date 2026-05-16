@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "migrate": "node scripts/apply-migration.mjs"
+    "migrate": "node scripts/apply-migration.mjs",
+    "seed:portions": "node scripts/seed-food-portions.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
