@@ -74,7 +74,7 @@ function bias(query: string, name: string): number {
     if (/sin tacc|arroz|soja|legumbre/.test(n)) b -= 2;
   }
   // "milanesa" sin tipo -> carne vacuna primero
-  if (/\bmilanesa\b/.test(q) && !/(pollo|pescado|soja|arroz)/.test(q)) {
+  if (/\bmilanesas?\b/.test(q) && !/(pollo|pescado|soja|arroz)/.test(q)) {
     if (/\bcarne vacuna\b/.test(n)) b += 3;
     if (/(soja|arroz|pescado)/.test(n)) b -= 2;
   }
