@@ -73,6 +73,28 @@ function bias(query: string, name: string): number {
   if (/\b(fideos?|pasta|tallarines?)\b/.test(q) && !/(sin tacc|arroz|soja)/.test(q)) {
     if (/sin tacc|arroz|soja|legumbre/.test(n)) b -= 2;
   }
+  // "milanesa" sin tipo -> carne vacuna primero
+  if (/\bmilanesa\b/.test(q) && !/(pollo|pescado|soja|arroz)/.test(q)) {
+    if (/\bcarne vacuna\b/.test(n)) b += 3;
+    if (/(soja|arroz|pescado)/.test(n)) b -= 2;
+  }
+  // "huevo" sin parte -> entero primero
+  if (/\bhuevos?\b/.test(q) && !/(yema|clara)/.test(q)) {
+    if (/\bentero\b/.test(n)) b += 3;
+    if (/(yema|clara)/.test(n)) b -= 3;
+  }
+  // "pollo" -> pollo sin piel primero, descartar partes sueltas raras
+  if (/\bpollo\b/.test(q) && !/(grasa|menudos|higado)/.test(q)) {
+    if (/\bgrasa\b/.test(n)) b -= 5;
+    if (/\bmenudos\b/.test(n)) b -= 5;
+    if (/\bhigado\b/.test(n)) b -= 5;
+    if (/\bsin piel\b/.test(n)) b += 2;
+  }
+  // "pan" -> pan blanco lacteado o frances primero
+  if (/\bpan\b/.test(q) && !/(rallado|arabe|salvado|integral|dulce)/.test(q)) {
+    if (/\b(blanco|lacteado|frances)\b/.test(n)) b += 2;
+    if (/\brallado\b/.test(n)) b -= 3;
+  }
   return b;
 }
 

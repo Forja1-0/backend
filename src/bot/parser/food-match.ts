@@ -34,7 +34,10 @@ export function coverage(query: string, name: string): number {
   if (qs.length === 0) return 0;
   const n = strip(name);
   const ns = sing(n);
-  const hit = qs.filter((t) => n.includes(t) || ns.includes(t)).length;
+  const hit = qs.filter((t) => {
+    const re = new RegExp(`\\b${t}\\b`, "i");
+    return re.test(n) || re.test(ns);
+  }).length;
   return hit / qs.length;
 }
 
