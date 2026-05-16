@@ -95,6 +95,12 @@ function bias(query: string, name: string): number {
     if (/\b(blanco|lacteado|frances)\b/.test(n)) b += 2;
     if (/\brallado\b/.test(n)) b -= 3;
   }
+  // "leche" -> leche entera fluida primero, castigar leche materna y en polvo
+  if (/\bleche\b/.test(q) && !/(materna|polvo|condensada|almendra|soja|descremada)/.test(q)) {
+    if (/\bentera\b/.test(n)) b += 3;
+    if (/\bfluida\b/.test(n)) b += 2;
+    if (/(materna|polvo|condensada)/.test(n)) b -= 5;
+  }
   return b;
 }
 

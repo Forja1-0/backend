@@ -3,6 +3,7 @@ import { getSession } from "./session.store.js";
 import { classify } from "./parser/intent-classifier.js";
 import { matchTraining } from "./parser/training-matcher.js";
 import { logger } from "../config/logger.js";
+import { sendText } from "../services/evolution.service.js";
 
 import { handleComplete, handleRpeResponse, handleSkip, handleQuery as handleTrainingQuery } from "./handlers/training.handler.js";
 import { handleCheckinResponse } from "./handlers/checkin.handler.js";
@@ -164,6 +165,9 @@ async function dispatchByIntent(
     }
 
     case "correction":
+      await sendText(user.wa_chat_id!, "Mandame de nuevo la comida con las cantidades correctas y piso la anterior, o decime qué querés cambiar.");
+      return;
+
     case "unknown":
     default:
       return handleUnknown(user);

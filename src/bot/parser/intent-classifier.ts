@@ -102,12 +102,20 @@ export function classify(input: string): Classification {
     return { ...base, intent: "correction", confidence: 0.85 };
   }
 
-  // ── 7. DISRUPTION (chequear ANTES que training_skip
+  // ── 7. MEAL SIGNALS (Calculamos antes para evitar falsos positivos) ──
+  const mealSignals =
+    (features.hasMealVerb ? 1 : 0) +
+    (features.hasMealTime ? 1 : 0) +
+    (features.hasFoodHint ? 1 : 0) +
+    (features.hasQuantity ? 1 : 0) +
+    (features.grams !== null ? 1 : 0);
+
+  // ── 8. DISRUPTION (chequear ANTES que training_skip
   //                   para que "me lesione no pude" no caiga en skip) ──
-  if (fuzzyTokenMatch(tokens, P.KEYWORDS_INJURY)) {
+  if (fuzzyTokenMatch(tokens, P.KEYWORDS_INJURY) && mealSignals < 2) {
     return { ...base, intent: "disruption_injury", confidence: 0.85 };
   }
-  if (fuzzyTokenMatch(tokens, P.KEYWORDS_ILLNESS)) {
+  if (fuzzyTokenMatch(tokens, P.KEYWORDS_ILLNESS) && mealSignals < 2) {
     return { ...base, intent: "disruption_illness", confidence: 0.85 };
   }
   // Desliz: contextual
@@ -153,15 +161,9 @@ export function classify(input: string): Classification {
     return { ...base, intent: "progress_query", confidence: 0.8 };
   }
 
-  // ── 11. MEAL LOG ─────────────────────────────────────────
+  // ── 12. MEAL LOG ─────────────────────────────────────────
   // Score: cualquier combo de (verbo de comer | momento del dia) +
   //        (cantidad | comida) es bastante seguro.
-  const mealSignals =
-    (features.hasMealVerb ? 1 : 0) +
-    (features.hasMealTime ? 1 : 0) +
-    (features.hasFoodHint ? 1 : 0) +
-    (features.hasQuantity ? 1 : 0) +
-    (features.grams !== null ? 1 : 0);
 
   if (mealSignals >= 2) {
     return { ...base, intent: "meal_log", confidence: 0.85 };
