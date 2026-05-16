@@ -28,16 +28,11 @@ export function queryTokens(q: string): string[] {
     .map(sing);
 }
 
-/** Fracción [0..1] de tokens del query presentes en el nombre. */
 export function coverage(query: string, name: string): number {
   const qs = queryTokens(query);
   if (qs.length === 0) return 0;
-  const n = strip(name);
-  const ns = sing(n);
-  const hit = qs.filter((t) => {
-    const re = new RegExp(`\\b${t}\\b`, "i");
-    return re.test(n) || re.test(ns);
-  }).length;
+  const ns = queryTokens(name);
+  const hit = qs.filter((t) => ns.includes(t)).length;
   return hit / qs.length;
 }
 

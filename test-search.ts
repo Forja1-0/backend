@@ -8,5 +8,5 @@ async function test(query) {
   res.slice(0, 10).forEach(r => console.log(`  - ${r.name} (score: ${r.base_score})`));
 }
 
-await test("pan");
+await test("fideos");
 process.exit(0);

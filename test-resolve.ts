@@ -17,4 +17,5 @@ await test("milanesas");
 await test("huevos");
 await test("pollo");
 await test("pan");
+await test("fideos");
 process.exit(0);
