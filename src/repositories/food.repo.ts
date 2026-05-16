@@ -9,7 +9,6 @@ export interface FoodItem {
   carbs_per_100g: number;
   fat_per_100g: number;
   fiber_per_100g: number;
-  standard_portion_g: number | null;
   source: string;
 }
 
@@ -69,7 +68,7 @@ export async function searchFood(q: string, limit = 10): Promise<FoodMatch[]> {
        )
      SELECT fi.id, fi.name, fi.category, fi.kcal_per_100g,
             fi.protein_per_100g, fi.carbs_per_100g, fi.fat_per_100g,
-            fi.fiber_per_100g, fi.standard_portion_g, fi.source,
+            fi.fiber_per_100g, fi.source,
             c.match_score, c.match_source
      FROM combined c
      JOIN food_items fi ON fi.id = c.id
@@ -125,7 +124,7 @@ export async function searchFoodCandidates(q: string, limit = 25): Promise<FoodC
        )
      SELECT fi.id, fi.name, fi.category, fi.kcal_per_100g,
             fi.protein_per_100g, fi.carbs_per_100g, fi.fat_per_100g,
-            fi.fiber_per_100g, fi.standard_portion_g, fi.source,
+            fi.fiber_per_100g, fi.source,
             c.base_score
      FROM combined c
      JOIN food_items fi ON fi.id = c.id
@@ -140,7 +139,7 @@ export async function getFoodById(id: string): Promise<FoodItem | null> {
   const { rows } = await query<FoodItem>(
     `SELECT id, name, category, kcal_per_100g, protein_per_100g,
             carbs_per_100g, fat_per_100g, fiber_per_100g,
-            standard_portion_g, source
+            source
      FROM food_items WHERE id = $1`,
     [id],
   );

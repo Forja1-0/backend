@@ -151,7 +151,6 @@ export function macros(food: Pick<FoodItem, "kcal_per_100g" | "protein_per_100g"
 export async function resolveGrams(
   item: ParsedItem,
   foodId: string,
-  standardPortionG: number | null,
   state: FoodState,
 ): Promise<{ grams: number; estimate: boolean }> {
   if (item.mode === "grams") return { grams: item.qty, estimate: false };
@@ -165,7 +164,6 @@ export async function resolveGrams(
 
   const def = await foodRepo.getDefaultPortion(foodId, state ?? undefined);
   if (def) return { grams: Math.round(item.qty * def.portion_grams), estimate: item.mode === "bare" };
-  if (standardPortionG) return { grams: Math.round(item.qty * standardPortionG), estimate: true };
   return { grams: Math.round(item.qty * 100), estimate: true };
 }
 
@@ -176,7 +174,7 @@ export async function buildItem(
   state: FoodState,
 ): Promise<{ entry: ParsedMealItem; estimate: boolean }> {
   const st = state ?? classifyState(food.name);
-  const { grams, estimate } = await resolveGrams(pi, food.id, food.standard_portion_g, st);
+  const { grams, estimate } = await resolveGrams(pi, food.id, st);
   const m = macros(food, grams);
   return {
     entry: {

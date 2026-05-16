@@ -224,7 +224,6 @@ CREATE TABLE food_items (
     carbs_per_100g      REAL NOT NULL DEFAULT 0,
     fat_per_100g        REAL NOT NULL DEFAULT 0,
     fiber_per_100g      REAL NOT NULL DEFAULT 0,
-    standard_portion_g  INT,
     source              TEXT NOT NULL DEFAULT 'SARA2',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
