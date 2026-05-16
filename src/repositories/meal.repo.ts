@@ -26,7 +26,7 @@ export async function saveMealLog(params: SaveMealLogParams) {
       params.input_mode,
       params.raw_input,
       JSON.stringify(params.parsed_items),
-      params.total_kcal,
+      Math.round(params.total_kcal),
       params.total_protein_g,
       params.total_carbs_g,
       params.total_fat_g,
