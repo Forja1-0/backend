@@ -8,6 +8,19 @@ import type {
   ParsedNutritionPlan, ParsedTrainingPlanRich,
 } from "../services/plan-pdf-parser.service.js";
 
+export function sanitizeTime(timeStr: string | null | undefined): string | null {
+  if (!timeStr) return null;
+  const trimmed = timeStr.trim();
+  const match = trimmed.match(/\b([0-1]?[0-9]|2[0-3]):([0-5][0-9])(?::([0-5][0-9]))?\b/);
+  if (match) {
+    const hours = match[1].padStart(2, "0");
+    const minutes = match[2];
+    const seconds = match[3] || "00";
+    return `${hours}:${minutes}:${seconds}`;
+  }
+  return null;
+}
+
 interface UserRow {
   id: string;
   name: string | null;
@@ -230,7 +243,7 @@ export async function saveStep6(userId: string, d: Step6Data) {
           day.day_of_week,
           day.session_type,
           day.session_name ?? null,
-          day.approx_time ?? null,
+          sanitizeTime(day.approx_time),
           day.duration_min ?? null,
           d.coach_name ?? null,
           day.exercises ? JSON.stringify(day.exercises) : null,
@@ -447,7 +460,7 @@ export async function saveTrainingPlanUpload(
           day.day_of_week,
           sessionType,
           day.session_name ?? null,
-          day.approx_time ?? null,
+          sanitizeTime(day.approx_time),
           day.duration_min ?? null,
           p.coach_name ?? null,
           exercises.length ? JSON.stringify(exercises) : null,
