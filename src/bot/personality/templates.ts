@@ -105,9 +105,9 @@ export function welcome(name: string | null): string {
 
 export function unknown(): string {
   return pick([
-    "No te re entendí. ¿Me lo decís de otra forma?",
+    "No te re entendí. ¿Me lo decís de otra forma? Probá *ayuda* para ver qué puedo hacer.",
     "Mmm, no pude interpretar eso. Probá *ayuda* para ver qué puedo hacer.",
-    "Se me escapó. ¿Podés ser un toque más específico?",
+    "Se me escapó. ¿Podés ser un toque más específico? Probá *ayuda* para ver qué puedo hacer.",
   ]);
 }
 

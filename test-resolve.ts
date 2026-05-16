@@ -13,7 +13,7 @@ async function test(query) {
   }
 }
 
-await test("milanesa");
+await test("milanesas");
 await test("huevos");
 await test("pollo");
 await test("pan");
