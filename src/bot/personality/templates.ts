@@ -186,7 +186,7 @@ export interface MealSummaryItem {
 const n0 = (x: number): string => Math.round(x).toLocaleString("es-AR");
 
 function itemLine(it: MealSummaryItem): string {
-  const nm = it.matched_db_name ?? it.name;
+  const nm = cleanFoodName(it.matched_db_name ?? it.name);
   const st = it.state ? ` (${it.state})` : "";
   const qty = it.grams > 0 ? `${n0(it.grams)}g de ` : "";
   const head = `• ${qty}${nm}${st} → ${n0(it.kcal)} kcal`;
@@ -263,10 +263,20 @@ export function mealClarify(foodHint: string): string {
   ]);
 }
 
+/** Limpia nombres SARA2 para mostrar al usuario (quita truncados, paréntesis rotos, etc). */
+function cleanFoodName(name: string): string {
+  return name
+    .replace(/-\s*$/, "")              // trailing hyphen
+    .replace(/\s*\([^)]*$/, "")        // open paren never closed
+    .replace(/^[^A-ZÁÉÍÓÚÜ]+/, "")     // leading lowercase fragment
+    .replace(/\s{2,}/g, " ")           // double spaces
+    .trim() || name.trim();
+}
+
 export function mealFoodClarify(foodLabel: string, options: { name: string }[]): string {
   const lines = [`🤔 *¿Qué tipo de ${foodLabel}?*\n`];
   options.forEach((o, i) => {
-    lines.push(`  *${i + 1}.* ${o.name}`);
+    lines.push(`  *${i + 1}.* ${cleanFoodName(o.name)}`);
   });
   lines.push(`\nRespondé con el *número*.`);
   return lines.join("\n");

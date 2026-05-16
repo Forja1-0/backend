@@ -23,7 +23,26 @@ const NAME_COCIDO_RE = /\b(cocid[oa]s?|hervid[oa]s?)\b/;
 
 const COVERAGE_FLOOR = 0.5;
 const MAX_OPTIONS = 6;
-const strip = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const strip = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+/**
+ * Detecta nombres corruptos de SARA2 (truncados en la importación).
+ * Ejemplos: "gelada Milanesa de pollo, prefrita con-"
+ *           "zada Milanesa de (carnicería) carne vacuna rebo-"
+ *           "llería / Milanesa de granja) pollo rebozada (po-"
+ */
+function isCorruptName(name: string): boolean {
+  const trimmed = name.trim();
+  // Empieza con minúscula (fragmento de palabra anterior)
+  if (/^[a-záéíóúü]/.test(trimmed)) return true;
+  // Termina con guión (palabra cortada)
+  if (trimmed.endsWith("-")) return true;
+  // Tiene paréntesis desbalanceados
+  const opens = (trimmed.match(/\(/g) || []).length;
+  const closes = (trimmed.match(/\)/g) || []).length;
+  if (opens !== closes) return true;
+  return false;
+}
 
 export function extractState(text: string): { query: string; state: FoodState } {
   let state: FoodState = null;
@@ -65,11 +84,12 @@ export async function resolveFood(rawQuery: string): Promise<ResolveOutcome> {
 
   const ranked = rankByCoverage(query, cands);
 
-  // Plausibles: cobertura mínima + sacar SIN TACC salvo que lo pidan.
+  // Plausibles: cobertura mínima + sacar SIN TACC salvo que lo pidan + sacar corruptos.
   const askedSinTacc = /sin tacc/.test(strip(query));
   let plausible = ranked
     .filter((r) => r.coverage >= COVERAGE_FLOOR)
-    .filter((r) => askedSinTacc || !/sin tacc/.test(strip(r.item.name)));
+    .filter((r) => askedSinTacc || !/sin tacc/.test(strip(r.item.name)))
+    .filter((r) => !isCorruptName(r.item.name));
 
   if (plausible.length === 0) return { kind: "none" };
 
@@ -96,6 +116,17 @@ export async function resolveFood(rawQuery: string): Promise<ResolveOutcome> {
   }
   // Un solo plausible → resolver.
   if (pool.length === 1) {
+    return { kind: "resolved", food: pool[0].item, state: state ?? classifyState(pool[0].item.name) };
+  }
+
+  // Si todos los candidatos tienen la misma cobertura máxima y el query
+  // es genérico (1 token significativo, ej "milanesa"), auto-pick el
+  // primero (el más específico/corto) en vez de preguntar con opciones
+  // que al usuario no le dicen nada.
+  const topCov = pool[0].coverage;
+  const allSameCov = pool.every((r) => Math.abs(r.coverage - topCov) < 0.01);
+  const queryTokenCount = query.split(/\s+/).filter((t) => t.length >= 2).length;
+  if (allSameCov && queryTokenCount <= 1) {
     return { kind: "resolved", food: pool[0].item, state: state ?? classifyState(pool[0].item.name) };
   }
 
