@@ -6,6 +6,8 @@
  * que elige random de un set de variantes.
  */
 
+import type { CoachAssessment, MacroKey } from "./coach.js";
+
 function pick<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -306,22 +308,88 @@ export function mealRegisteredEstimated(
 // QUERIES
 // ════════════════════════════════════════════════════════════
 
-export function remainingMacros(r: {
-  remaining_kcal: number;
-  remaining_protein: number;
-  remaining_carbs: number;
-  remaining_fat: number;
-}): string {
-  const lines = ["📊 *Te queda hoy:*\n"];
-  lines.push(`• ${Math.max(0, Math.round(r.remaining_kcal))} kcal`);
-  lines.push(`• ${Math.max(0, Math.round(r.remaining_protein))}g proteína`);
-  lines.push(`• ${Math.max(0, Math.round(r.remaining_carbs))}g carbos`);
-  lines.push(`• ${Math.max(0, Math.round(r.remaining_fat))}g grasas`);
-  return lines.join("\n");
-}
-
 export function nutritionNoPlan(): string {
   return "Todavía no tenés plan nutricional activo. Completá el onboarding o pedile a tu nutri que cargue los targets.";
+}
+
+// ════════════════════════════════════════════════════════════
+// COACH — feedback determinístico tras cada comida / consulta
+// ════════════════════════════════════════════════════════════
+
+const MACRO_LABEL: Record<MacroKey, string> = {
+  kcal: "kcal",
+  protein: "proteína",
+  carbs: "carbos",
+  fat: "grasas",
+};
+
+/** "120g" para macros en gramos, "120 kcal" para energía. */
+function macroAmount(key: MacroKey, value: number): string {
+  return key === "kcal" ? `${n0(value)} kcal` : `${n0(value)}g`;
+}
+
+function headlineLine(a: CoachAssessment): string {
+  switch (a.headline) {
+    case "over":
+      return "🔴 *Te pasaste del plan hoy.*";
+    case "tight":
+      return "🟡 *Vas justo* — ojo con lo que queda.";
+    default:
+      return "🟢 *Vas en línea con el plan.*";
+  }
+}
+
+function remainingBlock(a: CoachAssessment): string {
+  const m = a.macros;
+  return [
+    "📊 *Te queda hoy:*",
+    `• ${macroAmount("kcal", m.kcal.remaining)}`,
+    `• ${n0(m.protein.remaining)}g proteína`,
+    `• ${n0(m.carbs.remaining)}g carbos`,
+    `• ${n0(m.fat.remaining)}g grasas`,
+  ].join("\n");
+}
+
+function alertLines(a: CoachAssessment): string[] {
+  const out: string[] = [];
+  for (const key of ["kcal", "protein", "carbs", "fat"] as MacroKey[]) {
+    const m = a.macros[key];
+    if (m.status === "over") {
+      out.push(
+        key === "kcal"
+          ? `⚠️ Te pasaste *${macroAmount(key, m.overBy)}* del objetivo.`
+          : `⚠️ Te pasaste *${macroAmount(key, m.overBy)}* de ${MACRO_LABEL[key]}.`,
+      );
+    } else if (m.status === "low") {
+      out.push(
+        key === "kcal"
+          ? `🟡 Te quedan pocas calorías (*${macroAmount(key, m.remaining)}*).`
+          : `🟡 Te queda poco margen de ${MACRO_LABEL[key]} (*${macroAmount(key, m.remaining)}*).`,
+      );
+    }
+  }
+  if (a.earlyAlert) {
+    const label = a.earlyAlert.key === "kcal" ? "las kcal" : "la proteína";
+    const pct = Math.round(a.earlyAlert.pctConsumed * 100);
+    out.push(
+      `⏰ Son las ${a.earlyAlert.hour}h y ya vas por el *${pct}%* de ${label} del día. ` +
+        `Aflojá con el resto de las comidas o te vas a pasar.`,
+    );
+  }
+  return out;
+}
+
+/** Reporte standalone para la consulta "macros" / "cuánta prote me falta". */
+export function coachReport(a: CoachAssessment): string {
+  const parts = [headlineLine(a), "", remainingBlock(a)];
+  const alerts = alertLines(a);
+  if (alerts.length) parts.push("", ...alerts);
+  return parts.join("\n");
+}
+
+/** Bloque que se adjunta al "✅ Registrado" tras cada comida. */
+export function coachAfterMeal(a: CoachAssessment): string {
+  return `\n━━━━━━━━━━━━━━━\n${coachReport(a)}`;
 }
 
 // ════════════════════════════════════════════════════════════

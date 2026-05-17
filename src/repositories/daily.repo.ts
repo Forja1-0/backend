@@ -162,6 +162,39 @@ export async function getCheckinCandidates(): Promise<
   return rows;
 }
 
+export interface DailyRemainingRow {
+  target_kcal: number;
+  target_protein_g: number;
+  target_carbs_g: number;
+  target_fat_g: number;
+  consumed_kcal: number;
+  consumed_protein: number;
+  consumed_carbs: number;
+  consumed_fat: number;
+  remaining_kcal: number;
+  remaining_protein: number;
+  remaining_carbs: number;
+  remaining_fat: number;
+}
+
+/**
+ * Macros target / consumidos / restantes del día para un usuario.
+ * Lee de v_daily_remaining (schema.sql). Devuelve null si el user no
+ * tiene plan nutricional activo (la vista no devuelve fila).
+ */
+export async function getDailyRemaining(
+  userId: string,
+): Promise<DailyRemainingRow | null> {
+  const { rows } = await query<DailyRemainingRow>(
+    `SELECT target_kcal, target_protein_g, target_carbs_g, target_fat_g,
+            consumed_kcal, consumed_protein, consumed_carbs, consumed_fat,
+            remaining_kcal, remaining_protein, remaining_carbs, remaining_fat
+     FROM v_daily_remaining WHERE user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
 /** Eventos recientes para enriquecer el prompt del AI summary. */
 export async function getRecentEvents(
   userId: string,

@@ -1,31 +1,23 @@
 import type { User } from "../../types/user.types.js";
 import { query } from "../../config/db.js";
 import { sendText } from "../../services/evolution.service.js";
+import * as dailyRepo from "../../repositories/daily.repo.js";
+import { assessDay, localHour } from "../personality/coach.js";
 import * as T from "../personality/templates.js";
 
 /**
  * "Cuanta prote me falta", "cuantas kcal llevo", "macros del dia".
- * Lee de la vista v_daily_remaining (definida en schema.sql).
+ * Misma evaluación de coach que se adjunta tras cada comida: lo que queda
+ * + status + alertas de pasado/poco + alerta temprana por hora.
  */
 export async function handleNutritionQuery(user: User): Promise<void> {
   const jid = user.wa_chat_id!;
-  const { rows } = await query<{
-    target_kcal: number | null;
-    remaining_kcal: number;
-    remaining_protein: number;
-    remaining_carbs: number;
-    remaining_fat: number;
-  }>(
-    `SELECT target_kcal, remaining_kcal, remaining_protein, remaining_carbs, remaining_fat
-     FROM v_daily_remaining WHERE user_id = $1 LIMIT 1`,
-    [user.id],
-  );
-  const r = rows[0];
-  if (!r || r.target_kcal === null) {
+  const row = await dailyRepo.getDailyRemaining(user.id);
+  if (!row) {
     await sendText(jid, T.nutritionNoPlan());
     return;
   }
-  await sendText(jid, T.remainingMacros(r));
+  await sendText(jid, T.coachReport(assessDay(row, localHour(user.timezone))));
 }
 
 /**

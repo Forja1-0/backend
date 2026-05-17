@@ -3,6 +3,8 @@ import { parseMeal, applyStateChoice, applyFoodChoice, buildItem, type ParseResu
 import * as mealRepo from "../../repositories/meal.repo.js";
 import * as foodRepo from "../../repositories/food.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
+import * as dailyRepo from "../../repositories/daily.repo.js";
+import { assessDay, localHour } from "../personality/coach.js";
 import { sendText } from "../../services/evolution.service.js";
 import {
   setSession,
@@ -83,7 +85,7 @@ export async function handleMealLog(
 
   if (result.confidence >= CONFIDENCE_AUTOSAVE) {
     await persistMeal(user, rawText, result);
-    await sendText(jid, T.mealRegistered(result.items, result.totals, result.is_estimate));
+    await sendMealResult(user, T.mealRegistered(result.items, result.totals, result.is_estimate));
     return true;
   }
 
@@ -124,7 +126,7 @@ export async function handleMealConfirm(
     confidence: 1,
     source: "descriptive",
   });
-  await sendText(jid, T.mealRegistered(pending.parsed_items, pending.totals, pending.is_estimate));
+  await sendMealResult(user, T.mealRegistered(pending.parsed_items, pending.totals, pending.is_estimate));
 }
 
 /**
@@ -165,7 +167,7 @@ export async function handleMealClarify(
   const message = wasEstimated
     ? T.mealRegisteredEstimated(result.items, result.totals)
     : T.mealRegistered(result.items, result.totals, result.is_estimate);
-  await sendText(jid, message);
+  await sendMealResult(user, message);
 }
 
 /**
@@ -203,7 +205,27 @@ export async function handleMealStateClarify(
     confidence: 1,
     source: "quick",
   });
-  await sendText(jid, T.mealRegistered(items, totals, session.is_estimate));
+  await sendMealResult(user, T.mealRegistered(items, totals, session.is_estimate));
+}
+
+/**
+ * Manda el resumen "✅ Registrado" + el bloque de coach (te queda hoy,
+ * alertas de pasado/poco, alerta temprana por hora). Si el user no tiene
+ * plan nutricional activo, manda solo el resumen (sin coach). Llamar
+ * SIEMPRE después de persistMeal — la vista ya incluye la comida nueva.
+ */
+async function sendMealResult(user: User, baseMessage: string): Promise<void> {
+  const jid = user.wa_chat_id!;
+  let suffix = "";
+  try {
+    const row = await dailyRepo.getDailyRemaining(user.id);
+    if (row) {
+      suffix = T.coachAfterMeal(assessDay(row, localHour(user.timezone)));
+    }
+  } catch (err) {
+    logger.error("coach block failed", { err, userId: user.id });
+  }
+  await sendText(jid, baseMessage + suffix);
 }
 
 async function persistMeal(user: User, rawText: string, result: ParseResult): Promise<void> {
@@ -308,5 +330,5 @@ export async function handleMealFoodClarify(
     confidence: 0.9,
     source: "quick",
   });
-  await sendText(jid, T.mealRegistered(items, totals, fc.is_estimate));
+  await sendMealResult(user, T.mealRegistered(items, totals, fc.is_estimate));
 }
