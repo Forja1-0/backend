@@ -4,6 +4,7 @@ import type {
   Step5Data, Step6Data, Step7Data, ConsentData,
 } from "../schemas/onboarding.schema.js";
 import { invalidateUserDict } from "../bot/parser/training-matcher.js";
+import { normalizeArPhone } from "../utils/phone.js";
 import type {
   ParsedNutritionPlan, ParsedTrainingPlanRich,
 } from "../services/plan-pdf-parser.service.js";
@@ -41,7 +42,7 @@ export async function createUser(input: {
     `INSERT INTO users (email, phone_wa, onboarding_step, active)
      VALUES ($1, $2, 0, true)
      RETURNING id, name, email, phone_wa, wa_chat_id, active, onboarding_step, created_at`,
-    [input.email ?? null, input.phone_wa ?? null],
+    [input.email ?? null, input.phone_wa ? normalizeArPhone(input.phone_wa) : null],
   );
   return rows[0];
 }
@@ -79,7 +80,7 @@ export async function saveStep1(userId: string, d: Step1Data) {
       d.weight_kg,
       d.height_cm,
       d.body_fat_pct ?? null,
-      d.phone_wa ?? null,
+      d.phone_wa ? normalizeArPhone(d.phone_wa) : null,
     ],
   );
   return rows[0];

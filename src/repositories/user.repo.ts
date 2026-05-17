@@ -1,6 +1,6 @@
 import { query } from "../config/db.js";
 import type { User } from "../types/user.types.js";
-import { jidToPhone } from "../utils/phone.js";
+import { jidToPhone, arPhoneKey } from "../utils/phone.js";
 
 export async function findByJid(jid: string): Promise<User | null> {
   const { rows } = await query<User>(
@@ -11,9 +11,16 @@ export async function findByJid(jid: string): Promise<User | null> {
 }
 
 export async function findByPhone(phone: string): Promise<User | null> {
+  // Match por clave nacional (ultimos 10 digitos), no exacto: el onboarding
+  // guarda "2645267544" y WhatsApp manda "5492645267544". Ante varias filas
+  // (ej: shell de WA + perfil real) preferimos el mas avanzado en onboarding.
+  const key = arPhoneKey(phone);
   const { rows } = await query<User>(
-    `SELECT * FROM users WHERE phone_wa = $1 LIMIT 1`,
-    [phone],
+    `SELECT * FROM users
+     WHERE RIGHT(regexp_replace(phone_wa, '[^0-9]', '', 'g'), 10) = $1
+     ORDER BY onboarding_step DESC, created_at ASC
+     LIMIT 1`,
+    [key],
   );
   return rows[0] ?? null;
 }
