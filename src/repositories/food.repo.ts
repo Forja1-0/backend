@@ -147,6 +147,77 @@ export async function getFoodById(id: string): Promise<FoodItem | null> {
 }
 
 // ────────────────────────────────────────────────────────────
+// RECOMENDADOR — alimentos ricos en un macro (coach v2)
+// ────────────────────────────────────────────────────────────
+
+export interface MacroRichFood {
+  name: string;
+  kcal_per_100g: number;
+  protein_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  default_portion_name: string | null;
+  default_portion_grams: number | null;
+}
+
+/** macro lógico → columna física + categorías y densidad mínima sensatas. */
+const MACRO_QUERY: Record<
+  "protein" | "carbs" | "fat",
+  { column: string; categories: string[]; minDensity: number }
+> = {
+  protein: {
+    column: "protein_per_100g",
+    categories: ["proteina_animal", "lacteo", "legumbre", "suplemento"],
+    minDensity: 10,
+  },
+  carbs: {
+    column: "carbs_per_100g",
+    categories: ["carbohidrato", "fruta", "legumbre"],
+    minDensity: 15,
+  },
+  fat: {
+    column: "fat_per_100g",
+    categories: ["grasa", "fruto_seco", "lacteo"],
+    minDensity: 15,
+  },
+};
+
+/**
+ * Alimentos densos en un macro, para sugerir "con X completás lo que falta".
+ * Ordena por densidad del macro y, a igualdad, por nombre más corto (suele
+ * ser el alimento base — "Huevo de gallina" antes que variantes raras de
+ * SARA2). Adjunta la porción casera default si existe.
+ *
+ * `column` sale de un whitelist fijo (MACRO_QUERY) → no hay inyección.
+ */
+export async function getMacroRichFoods(
+  macro: "protein" | "carbs" | "fat",
+  limit = 8,
+): Promise<MacroRichFood[]> {
+  const cfg = MACRO_QUERY[macro];
+  const { rows } = await query<MacroRichFood>(
+    `SELECT fi.name, fi.kcal_per_100g,
+            fi.protein_per_100g, fi.carbs_per_100g, fi.fat_per_100g,
+            fp.portion_name              AS default_portion_name,
+            fp.portion_grams::float8     AS default_portion_grams
+     FROM food_items fi
+     LEFT JOIN LATERAL (
+       SELECT portion_name, portion_grams
+       FROM food_portions
+       WHERE food_id = fi.id AND is_default = true
+       ORDER BY (portion_state IS NULL) DESC
+       LIMIT 1
+     ) fp ON true
+     WHERE fi.category = ANY($1)
+       AND fi.${cfg.column} >= $2
+     ORDER BY fi.${cfg.column} DESC, length(fi.name) ASC
+     LIMIT $3`,
+    [cfg.categories, cfg.minDensity, limit],
+  );
+  return rows;
+}
+
+// ────────────────────────────────────────────────────────────
 // FOOD_PORTIONS — porciones caseras por alimento (ver migration 005)
 // ────────────────────────────────────────────────────────────
 

@@ -6,7 +6,12 @@
  * que elige random de un set de variantes.
  */
 
-import type { CoachAssessment, MacroKey } from "./coach.js";
+import type {
+  CoachAssessment,
+  FoodSuggestion,
+  MacroKey,
+  RecoMacro,
+} from "./coach.js";
 
 function pick<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -379,17 +384,42 @@ function alertLines(a: CoachAssessment): string[] {
   return out;
 }
 
+/** Recomendación de comida para cerrar el macro más atrasado (coach v2). */
+export interface CoachReco {
+  macro: RecoMacro;
+  remaining: number;
+  suggestions: FoodSuggestion[];
+}
+
+function suggestionChunk(s: FoodSuggestion): string {
+  const hint = s.portionHint ? ` (${s.portionHint})` : "";
+  return `*${n0(s.grams)}g de ${cleanFoodName(s.name)}*${hint}`;
+}
+
+function recoLine(reco: CoachReco): string | null {
+  if (reco.suggestions.length === 0) return null;
+  const label = MACRO_LABEL[reco.macro];
+  const [first, second] = reco.suggestions;
+  const head = first.closesGap
+    ? `💡 Te faltan *~${n0(reco.remaining)}g de ${label}*. Lo cerrás con ${suggestionChunk(first)}`
+    : `💡 Te faltan *~${n0(reco.remaining)}g de ${label}*. Te acerca ${suggestionChunk(first)} _(+${n0(first.addsMacro)}g)_`;
+  const alt = second ? ` — o ${suggestionChunk(second)}.` : ".";
+  return head + alt;
+}
+
 /** Reporte standalone para la consulta "macros" / "cuánta prote me falta". */
-export function coachReport(a: CoachAssessment): string {
+export function coachReport(a: CoachAssessment, reco?: CoachReco | null): string {
   const parts = [headlineLine(a), "", remainingBlock(a)];
   const alerts = alertLines(a);
   if (alerts.length) parts.push("", ...alerts);
+  const rec = reco ? recoLine(reco) : null;
+  if (rec) parts.push("", rec);
   return parts.join("\n");
 }
 
 /** Bloque que se adjunta al "✅ Registrado" tras cada comida. */
-export function coachAfterMeal(a: CoachAssessment): string {
-  return `\n━━━━━━━━━━━━━━━\n${coachReport(a)}`;
+export function coachAfterMeal(a: CoachAssessment, reco?: CoachReco | null): string {
+  return `\n━━━━━━━━━━━━━━━\n${coachReport(a, reco)}`;
 }
 
 // ════════════════════════════════════════════════════════════

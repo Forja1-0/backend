@@ -3,6 +3,7 @@ import { query } from "../../config/db.js";
 import { sendText } from "../../services/evolution.service.js";
 import * as dailyRepo from "../../repositories/daily.repo.js";
 import { assessDay, localHour } from "../personality/coach.js";
+import { buildCoachReco } from "../coach-reco.js";
 import * as T from "../personality/templates.js";
 
 /**
@@ -17,7 +18,9 @@ export async function handleNutritionQuery(user: User): Promise<void> {
     await sendText(jid, T.nutritionNoPlan());
     return;
   }
-  await sendText(jid, T.coachReport(assessDay(row, localHour(user.timezone))));
+  const assessment = assessDay(row, localHour(user.timezone));
+  const reco = await buildCoachReco(assessment);
+  await sendText(jid, T.coachReport(assessment, reco));
 }
 
 /**

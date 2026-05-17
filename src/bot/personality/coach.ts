@@ -131,3 +131,134 @@ export function assessDay(
 
   return { headline, macros, earlyAlert };
 }
+
+// ════════════════════════════════════════════════════════════
+// RECOMENDADOR DE COMIDAS (v2) — "con X comida completás lo que falta"
+// ════════════════════════════════════════════════════════════
+
+export type RecoMacro = "protein" | "carbs" | "fat";
+
+/** Mínimo restante (g) para que valga la pena recomendar ese macro. */
+export const RECO_MIN_REMAINING: Record<RecoMacro, number> = {
+  protein: 15,
+  carbs: 25,
+  fat: 10,
+};
+
+/**
+ * Decide para qué macro recomendar comida. Prioriza la proteína; si está
+ * cubierta, va por el macro más atrasado (menor % consumido) que tenga
+ * margen suficiente. Devuelve null si no hay nada útil que recomendar o si
+ * ya te pasaste de kcal (no tiene sentido decirte que comas más).
+ */
+export function chooseRecoMacro(a: CoachAssessment): RecoMacro | null {
+  // Si ya te pasaste de calorías, no recomendamos comer más; el aviso de
+  // "te pasaste" ya cubre el caso.
+  if (a.macros.kcal.status === "over") return null;
+
+  const eligible = (["protein", "carbs", "fat"] as RecoMacro[]).filter((k) => {
+    const m = a.macros[k];
+    return m.status !== "over" && m.remaining >= RECO_MIN_REMAINING[k];
+  });
+  if (eligible.length === 0) return null;
+
+  // Proteína primero si está entre las elegibles.
+  if (eligible.includes("protein")) return "protein";
+
+  // Si no, la más atrasada por % consumido.
+  eligible.sort((x, y) => a.macros[x].pctConsumed - a.macros[y].pctConsumed);
+  return eligible[0];
+}
+
+/** Alimento candidato (viene de food.repo.getMacroRichFoods). */
+export interface RecoFood {
+  name: string;
+  kcal_per_100g: number;
+  protein_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  /** Porción casera default, si existe ("unidad", "feta", "plato"...). */
+  default_portion_name: string | null;
+  default_portion_grams: number | null;
+}
+
+export interface FoodSuggestion {
+  name: string;
+  /** Gramos sugeridos, redondeados a múltiplo de 5. */
+  grams: number;
+  /** "≈ 5 unidad" si hay porción casera y el conteo es entero útil. */
+  portionHint: string | null;
+  /** Cuánto del macro objetivo aporta esa cantidad (g, redondeado). */
+  addsMacro: number;
+  /** true si cierra >= 85% del faltante (si no, "te acerca"). */
+  closesGap: boolean;
+}
+
+const MACRO_DENSITY: Record<RecoMacro, keyof RecoFood> = {
+  protein: "protein_per_100g",
+  carbs: "carbs_per_100g",
+  fat: "fat_per_100g",
+};
+
+/**
+ * A partir del faltante de un macro y una lista de alimentos ricos en él,
+ * calcula 1-2 sugerencias concretas con gramos y porción casera. Pura.
+ *
+ * - Cantidad = faltante / (densidad/100), redondeada a 5g.
+ * - Si esa cantidad costaría más kcal de las que quedan, se recorta al
+ *   tope calórico (la sugerencia "te acerca" en vez de "lo cerrás").
+ * - Descarta alimentos que requieran cantidades irreales (>500g) o con
+ *   densidad despreciable.
+ */
+export function buildFoodSuggestions(
+  macro: RecoMacro,
+  remainingGrams: number,
+  kcalRemaining: number,
+  foods: RecoFood[],
+  max = 2,
+): FoodSuggestion[] {
+  const densKey = MACRO_DENSITY[macro];
+  const out: FoodSuggestion[] = [];
+
+  for (const f of foods) {
+    const density = f[densKey] as number; // g de macro por 100g
+    if (!density || density < 1) continue;
+
+    let grams = (remainingGrams / density) * 100;
+    let capped = false;
+
+    // Tope calórico: no sugerir algo que te haga pasar de kcal.
+    if (kcalRemaining > 0 && f.kcal_per_100g > 0) {
+      const maxGramsByKcal = (kcalRemaining / f.kcal_per_100g) * 100;
+      if (grams > maxGramsByKcal) {
+        grams = maxGramsByKcal;
+        capped = true;
+      }
+    }
+
+    grams = Math.round(grams / 5) * 5;
+    if (grams < 20 || grams > 500) continue;
+
+    const addsMacro = Math.round((grams * density) / 100);
+    if (addsMacro < 1) continue;
+
+    let portionHint: string | null = null;
+    if (f.default_portion_name && f.default_portion_grams && f.default_portion_grams > 0) {
+      const count = Math.round(grams / f.default_portion_grams);
+      if (count >= 1 && count <= 20) {
+        portionHint = `≈ ${count} ${f.default_portion_name}`;
+      }
+    }
+
+    out.push({
+      name: f.name,
+      grams,
+      portionHint,
+      addsMacro,
+      closesGap: !capped && addsMacro >= remainingGrams * 0.85,
+    });
+    if (out.length >= max) break;
+  }
+
+  return out;
+}

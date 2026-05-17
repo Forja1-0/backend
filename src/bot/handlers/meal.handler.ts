@@ -5,6 +5,7 @@ import * as foodRepo from "../../repositories/food.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
 import * as dailyRepo from "../../repositories/daily.repo.js";
 import { assessDay, localHour } from "../personality/coach.js";
+import { buildCoachReco } from "../coach-reco.js";
 import { sendText } from "../../services/evolution.service.js";
 import {
   setSession,
@@ -220,7 +221,9 @@ async function sendMealResult(user: User, baseMessage: string): Promise<void> {
   try {
     const row = await dailyRepo.getDailyRemaining(user.id);
     if (row) {
-      suffix = T.coachAfterMeal(assessDay(row, localHour(user.timezone)));
+      const assessment = assessDay(row, localHour(user.timezone));
+      const reco = await buildCoachReco(assessment);
+      suffix = T.coachAfterMeal(assessment, reco);
     }
   } catch (err) {
     logger.error("coach block failed", { err, userId: user.id });

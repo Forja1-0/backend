@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { assessDay, localHour } from "../../src/bot/personality/coach.js";
+import {
+  assessDay,
+  buildFoodSuggestions,
+  chooseRecoMacro,
+  localHour,
+  type RecoFood,
+} from "../../src/bot/personality/coach.js";
 import type { DailyRemainingRow } from "../../src/repositories/daily.repo.js";
 
 /** Construye una fila de v_daily_remaining a partir de target + consumido. */
@@ -75,6 +81,94 @@ describe("coach.assessDay", () => {
   it("misma sobrecarga pero tarde (>=15h) → sin alerta temprana", () => {
     const a = assessDay(row(TARGET, { kcal: 2000, protein: 80, carbs: 200, fat: 50 }), 16);
     expect(a.earlyAlert).toBeNull();
+  });
+});
+
+describe("coach.chooseRecoMacro", () => {
+  it("prioriza proteína cuando hay margen suficiente", () => {
+    const a = assessDay(row(TARGET, { kcal: 1200, protein: 60, carbs: 100, fat: 30 }), 12);
+    expect(chooseRecoMacro(a)).toBe("protein");
+  });
+
+  it("si la proteína está cubierta, va por el macro más atrasado", () => {
+    // proteína casi completa (queda 5g < min 15) → cae a carbos/grasas
+    const a = assessDay(row(TARGET, { kcal: 1200, protein: 184, carbs: 50, fat: 70 }), 12);
+    expect(chooseRecoMacro(a)).toBe("carbs");
+  });
+
+  it("no recomienda comer más si ya te pasaste de kcal", () => {
+    const a = assessDay(row(TARGET, { kcal: 4304, protein: 64, carbs: 400, fat: 272 }), 21);
+    expect(chooseRecoMacro(a)).toBeNull();
+  });
+
+  it("no recomienda si no queda margen mínimo en ningún macro", () => {
+    const a = assessDay(row(TARGET, { kcal: 2900, protein: 185, carbs: 360, fat: 80 }), 21);
+    expect(chooseRecoMacro(a)).toBeNull();
+  });
+});
+
+describe("coach.buildFoodSuggestions", () => {
+  const pollo: RecoFood = {
+    name: "Pechuga de pollo, cocida",
+    kcal_per_100g: 165,
+    protein_per_100g: 31,
+    carbs_per_100g: 0,
+    fat_per_100g: 3.6,
+    default_portion_name: "filet",
+    default_portion_grams: 150,
+  };
+  const huevo: RecoFood = {
+    name: "Huevo de gallina, entero",
+    kcal_per_100g: 155,
+    protein_per_100g: 13,
+    carbs_per_100g: 1,
+    fat_per_100g: 11,
+    default_portion_name: "unidad",
+    default_portion_grams: 50,
+  };
+
+  it("calcula gramos para cerrar el faltante + porción casera", () => {
+    const [s] = buildFoodSuggestions("protein", 40, 1500, [pollo]);
+    // 40g prote / 0.31 ≈ 129g → redondeo a 5 = 130g
+    expect(s.grams).toBe(130);
+    expect(s.portionHint).toBe("≈ 1 filet");
+    expect(s.closesGap).toBe(true);
+    expect(s.addsMacro).toBeCloseTo(40, 0);
+  });
+
+  it("expresa la porción en unidades naturales (huevos)", () => {
+    const [s] = buildFoodSuggestions("protein", 26, 1500, [huevo]);
+    // 26 / 0.13 = 200g → 4 unidades de 50g
+    expect(s.grams).toBe(200);
+    expect(s.portionHint).toBe("≈ 4 unidad");
+  });
+
+  it("recorta al tope calórico → no cierra el gap, marca closesGap=false", () => {
+    // faltan 40g prote pero solo quedan 150 kcal: pollo 165kcal/100g → ~90g máx
+    const [s] = buildFoodSuggestions("protein", 40, 150, [pollo]);
+    expect(s.grams).toBeLessThan(130);
+    expect(s.closesGap).toBe(false);
+    expect(s.addsMacro).toBeLessThan(40);
+  });
+
+  it("descarta densidad despreciable y cantidades irreales", () => {
+    const lechuga: RecoFood = {
+      name: "Lechuga",
+      kcal_per_100g: 15,
+      protein_per_100g: 1,
+      carbs_per_100g: 2,
+      fat_per_100g: 0,
+      default_portion_name: null,
+      default_portion_grams: null,
+    };
+    expect(buildFoodSuggestions("protein", 40, 2000, [lechuga])).toEqual([]);
+  });
+
+  it("devuelve hasta 2 sugerencias", () => {
+    const out = buildFoodSuggestions("protein", 40, 2000, [pollo, huevo]);
+    expect(out).toHaveLength(2);
+    expect(out[0].name).toContain("pollo");
+    expect(out[1].name).toContain("Huevo");
   });
 });
 
