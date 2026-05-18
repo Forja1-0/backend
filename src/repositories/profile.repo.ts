@@ -1,4 +1,4 @@
-import { query } from "../config/db.js";
+import { query, tx } from "../config/db.js";
 
 /**
  * Repo del perfil web (centro de control del atleta). Solo lee/escribe sobre
@@ -91,9 +91,18 @@ export async function getOverview(userId: string) {
 export async function getNutrition(userId: string) {
   const [active, history, restrictions, summaries] = await Promise.all([
     query(
-      `SELECT id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
-              meal_distribution, nutritionist_name, plan_file_url, created_at
-       FROM nutrition_plans WHERE user_id = $1 AND is_active = true LIMIT 1`,
+      `SELECT np.id, np.target_kcal, np.target_protein_g, np.target_carbs_g,
+              np.target_fat_g, np.meal_distribution, np.nutritionist_name,
+              CASE WHEN EXISTS (
+                     SELECT 1 FROM nutrition_plan_files f
+                     WHERE f.user_id = np.user_id AND f.is_active = true
+                   )
+                   THEN '/api/profile/' || np.user_id || '/nutrition/plan/file'
+                   ELSE np.plan_file_url
+              END AS plan_file_url,
+              np.created_at
+       FROM nutrition_plans np
+       WHERE np.user_id = $1 AND np.is_active = true LIMIT 1`,
       [userId],
     ),
     query(
@@ -283,6 +292,312 @@ export async function updateActiveInjuries(userId: string, injuries: unknown[]) 
     [userId, JSON.stringify(injuries)],
   );
   return rows[0];
+}
+
+/* ---------------- Identidad (datos personales) ---------------- */
+export async function updateIdentity(
+  userId: string,
+  patch: { name?: string; age?: number; sex?: "M" | "F" | "X"; email?: string; phone_wa?: string; timezone?: string },
+) {
+  const sets: string[] = [];
+  const vals: unknown[] = [userId];
+  for (const [k, v] of Object.entries(patch)) {
+    if (v == null) continue;
+    vals.push(v);
+    sets.push(`${k} = $${vals.length}`);
+  }
+  if (!sets.length) return null;
+  const { rows } = await query(
+    `UPDATE users SET ${sets.join(", ")}, updated_at = now() WHERE id = $1
+     RETURNING id AS user_id, name, age, sex, email, phone_wa, timezone`,
+    vals,
+  );
+  return rows[0] ?? null;
+}
+
+export async function deleteUser(userId: string): Promise<boolean> {
+  // ON DELETE CASCADE en todas las FKs → borra medical_history, goals,
+  // nutrition_plans, training_plans, frequent_meals, meal_logs,
+  // training_logs, events, daily_summaries, journey_cards, consents,
+  // dietary_restrictions, user_preferences, medical_documents, etc.
+  const { rowCount } = await query(`DELETE FROM users WHERE id = $1`, [userId]);
+  return (rowCount ?? 0) > 0;
+}
+
+/* ---------------- Plan nutricional (editar macros) ---------------- */
+export async function updateNutritionPlan(
+  userId: string,
+  d: { target_kcal: number; target_protein_g: number; target_carbs_g: number; target_fat_g: number; nutritionist_name?: string | null },
+) {
+  // Espejo de saveStep4: el plan activo es inmutable, se desactiva y se
+  // crea uno nuevo (los cambios "aplican desde mañana, no retroactivos").
+  return tx(async (client) => {
+    const prev = await client.query(
+      `SELECT meal_distribution, nutritionist_name, plan_file_url
+       FROM nutrition_plans WHERE user_id = $1 AND is_active = true LIMIT 1`,
+      [userId],
+    );
+    await client.query(
+      `UPDATE nutrition_plans SET is_active = false WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
+    const carry = prev.rows[0] ?? {};
+    const { rows } = await client.query(
+      `INSERT INTO nutrition_plans
+         (user_id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
+          meal_distribution, nutritionist_name, plan_file_url, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+       RETURNING id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
+                 nutritionist_name, plan_file_url, created_at`,
+      [
+        userId,
+        Math.round(d.target_kcal),
+        Math.round(d.target_protein_g),
+        Math.round(d.target_carbs_g),
+        Math.round(d.target_fat_g),
+        carry.meal_distribution ?? null,
+        d.nutritionist_name ?? carry.nutritionist_name ?? null,
+        carry.plan_file_url ?? null,
+      ],
+    );
+    return rows[0];
+  });
+}
+
+/**
+ * Sube el PDF del plan como referencia descargable. A diferencia del flujo de
+ * onboarding NO pasa por Gemini: el perfil web edita los macros aparte (macro
+ * editor), acá solo se guarda el archivo. parsed_data queda como stub para
+ * cumplir el NOT NULL del schema sin acoplar a la IA.
+ */
+export async function saveProfileNutritionPlanFile(
+  userId: string,
+  file: { bytes: Buffer; mime: string; name: string },
+) {
+  return tx(async (client) => {
+    await client.query(
+      `UPDATE nutrition_plan_files SET is_active = false
+       WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
+    const nutri = await client.query<{ nutritionist_name: string | null }>(
+      `SELECT nutritionist_name FROM nutrition_plans
+       WHERE user_id = $1 AND is_active = true LIMIT 1`,
+      [userId],
+    );
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO nutrition_plan_files
+         (user_id, nutritionist_name, raw_file_bytes, raw_file_mime,
+          raw_file_name, raw_file_size, parsed_data, parser_version, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, true)
+       RETURNING id`,
+      [
+        userId,
+        nutri.rows[0]?.nutritionist_name ?? null,
+        file.bytes,
+        file.mime,
+        file.name,
+        file.bytes.length,
+        JSON.stringify({ source: "profile_upload" }),
+        "profile-upload-v1",
+      ],
+    );
+    return { file_id: rows[0].id };
+  });
+}
+
+export async function deactivateNutritionPlanFile(userId: string): Promise<boolean> {
+  return tx(async (client) => {
+    const f = await client.query(
+      `UPDATE nutrition_plan_files SET is_active = false
+       WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
+    await client.query(
+      `UPDATE nutrition_plans SET plan_file_url = NULL
+       WHERE user_id = $1 AND is_active = true`,
+      [userId],
+    );
+    return (f.rowCount ?? 0) > 0;
+  });
+}
+
+export async function getNutritionPlanFileBytes(userId: string) {
+  const { rows } = await query<{
+    raw_file_bytes: Buffer | null;
+    raw_file_mime: string | null;
+    raw_file_name: string | null;
+  }>(
+    `SELECT raw_file_bytes, raw_file_mime, raw_file_name
+     FROM nutrition_plan_files
+     WHERE user_id = $1 AND is_active = true LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
+/* ---------------- Médico (crónicas / medicación / alergias / pasadas) ---------------- */
+const MEDICAL_JSON_COLS = ["chronic_conditions", "allergies", "medications", "past_injuries", "active_injuries"] as const;
+type MedicalCol = (typeof MEDICAL_JSON_COLS)[number];
+
+export async function updateMedical(userId: string, patch: Partial<Record<MedicalCol, unknown[]>>) {
+  const cols = Object.keys(patch).filter((k): k is MedicalCol => (MEDICAL_JSON_COLS as readonly string[]).includes(k));
+  if (!cols.length) return null;
+  // Upsert: si no existe la fila medical_history, se crea con defaults.
+  const insertCols = cols.join(", ");
+  const insertPlaceholders = cols.map((_, i) => `$${i + 2}::jsonb`).join(", ");
+  const updateSet = cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ");
+  const vals = cols.map((c) => JSON.stringify(patch[c] ?? []));
+  const { rows } = await query(
+    `INSERT INTO medical_history (user_id, ${insertCols})
+     VALUES ($1, ${insertPlaceholders})
+     ON CONFLICT (user_id) DO UPDATE SET ${updateSet}
+     RETURNING chronic_conditions, allergies, medications, past_injuries, active_injuries`,
+    [userId, ...vals],
+  );
+  return rows[0];
+}
+
+/* ---------------- Documentos clínicos ---------------- */
+const SLOT_URL_COL: Record<string, string> = {
+  ecg: "ecg_file_url",
+  xray: "xray_file_url",
+  blood_work: "blood_work_url",
+  medical_clearance: "medical_clearance_url",
+};
+
+export async function listMedicalDocuments(userId: string) {
+  const { rows } = await query(
+    `SELECT id, slot, doc_type, raw_file_mime, raw_file_name, raw_file_size, created_at
+     FROM medical_documents WHERE user_id = $1 ORDER BY created_at DESC`,
+    [userId],
+  );
+  return rows;
+}
+
+export async function createMedicalDocument(
+  userId: string,
+  doc: { slot: string; doc_type: string; bytes: Buffer; mime: string; name: string; size: number },
+) {
+  return tx(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO medical_documents
+         (user_id, slot, doc_type, raw_file_bytes, raw_file_mime, raw_file_name, raw_file_size)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, slot, doc_type, raw_file_mime, raw_file_name, raw_file_size, created_at`,
+      [userId, doc.slot, doc.doc_type, doc.bytes, doc.mime, doc.name, doc.size],
+    );
+    const id = rows[0].id;
+    const urlCol = SLOT_URL_COL[doc.slot];
+    if (urlCol) {
+      // medical_history es 1:1 — upsert para no romper si la fila no existe.
+      await client.query(
+        `INSERT INTO medical_history (user_id, ${urlCol})
+         VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE SET ${urlCol} = EXCLUDED.${urlCol}`,
+        [userId, `/api/profile/${userId}/documents/${id}/file`],
+      );
+    }
+    return rows[0];
+  });
+}
+
+export async function getMedicalDocumentBytes(userId: string, id: string) {
+  const { rows } = await query<{
+    raw_file_bytes: Buffer;
+    raw_file_mime: string;
+    raw_file_name: string;
+  }>(
+    `SELECT raw_file_bytes, raw_file_mime, raw_file_name
+     FROM medical_documents WHERE user_id = $1 AND id = $2 LIMIT 1`,
+    [userId, id],
+  );
+  return rows[0] ?? null;
+}
+
+export async function deleteMedicalDocument(userId: string, id: string): Promise<boolean> {
+  return tx(async (client) => {
+    const { rows } = await client.query<{ slot: string }>(
+      `DELETE FROM medical_documents WHERE user_id = $1 AND id = $2 RETURNING slot`,
+      [userId, id],
+    );
+    if (!rows[0]) return false;
+    const urlCol = SLOT_URL_COL[rows[0].slot];
+    if (urlCol) {
+      // Si quedan otros docs del mismo slot, apuntar al más reciente; si no, NULL.
+      const latest = await client.query<{ id: string }>(
+        `SELECT id FROM medical_documents
+         WHERE user_id = $1 AND slot = $2 ORDER BY created_at DESC LIMIT 1`,
+        [userId, rows[0].slot],
+      );
+      const newUrl = latest.rows[0]
+        ? `/api/profile/${userId}/documents/${latest.rows[0].id}/file`
+        : null;
+      await client.query(
+        `UPDATE medical_history SET ${urlCol} = $2 WHERE user_id = $1`,
+        [userId, newUrl],
+      );
+    }
+    return true;
+  });
+}
+
+/* ---------------- Preferencias (recordatorios / tono / privacidad) ---------------- */
+export async function getPreferences(userId: string) {
+  const { rows } = await query<{ prefs: Record<string, unknown> }>(
+    `SELECT prefs FROM user_preferences WHERE user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  return rows[0]?.prefs ?? null;
+}
+
+export async function upsertPreferences(userId: string, prefs: Record<string, unknown>) {
+  const { rows } = await query<{ prefs: Record<string, unknown> }>(
+    `INSERT INTO user_preferences (user_id, prefs, updated_at)
+     VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (user_id) DO UPDATE SET prefs = EXCLUDED.prefs, updated_at = now()
+     RETURNING prefs`,
+    [userId, JSON.stringify(prefs)],
+  );
+  return rows[0].prefs;
+}
+
+/* ---------------- Export (Ley 25.326 — derecho de acceso) ---------------- */
+export async function exportAll(userId: string) {
+  const [user, medical, goals, plans, restrictions, training, meals, mealLogs, trainingLogs, events, summaries, cards, prefs, docs] =
+    await Promise.all([
+      query(`SELECT * FROM users WHERE id = $1`, [userId]),
+      query(`SELECT * FROM medical_history WHERE user_id = $1`, [userId]),
+      query(`SELECT * FROM goals WHERE user_id = $1 ORDER BY created_at`, [userId]),
+      query(`SELECT id, target_kcal, target_protein_g, target_carbs_g, target_fat_g, nutritionist_name, is_active, created_at FROM nutrition_plans WHERE user_id = $1 ORDER BY created_at`, [userId]),
+      query(`SELECT * FROM dietary_restrictions WHERE user_id = $1`, [userId]),
+      query(`SELECT id, day_of_week, session_type, session_name, approx_time, duration_min, coach_name, is_active FROM training_plans WHERE user_id = $1 ORDER BY day_of_week`, [userId]),
+      query(`SELECT * FROM frequent_meals WHERE user_id = $1 ORDER BY created_at`, [userId]),
+      query(`SELECT * FROM meal_logs WHERE user_id = $1 ORDER BY logged_at`, [userId]),
+      query(`SELECT * FROM training_logs WHERE user_id = $1 ORDER BY logged_at`, [userId]),
+      query(`SELECT * FROM events WHERE user_id = $1 ORDER BY occurred_at`, [userId]),
+      query(`SELECT * FROM daily_summaries WHERE user_id = $1 ORDER BY summary_date`, [userId]),
+      query(`SELECT id, card_type, week_number, total_weeks, narrative_text, shared, created_at FROM journey_cards WHERE user_id = $1 ORDER BY created_at`, [userId]),
+      query(`SELECT prefs, updated_at FROM user_preferences WHERE user_id = $1`, [userId]),
+      query(`SELECT id, slot, doc_type, raw_file_mime, raw_file_name, raw_file_size, created_at FROM medical_documents WHERE user_id = $1 ORDER BY created_at`, [userId]),
+    ]);
+  return {
+    exported_at: new Date().toISOString(),
+    user: user.rows[0] ?? null,
+    medical_history: medical.rows[0] ?? null,
+    goals: goals.rows,
+    nutrition_plans: plans.rows,
+    dietary_restrictions: restrictions.rows[0] ?? null,
+    training_plans: training.rows,
+    frequent_meals: meals.rows,
+    meal_logs: mealLogs.rows,
+    training_logs: trainingLogs.rows,
+    events: events.rows,
+    daily_summaries: summaries.rows,
+    journey_cards: cards.rows,
+    preferences: prefs.rows[0] ?? null,
+    medical_documents: docs.rows,
+  };
 }
 
 /* ---------------- Journey ---------------- */
