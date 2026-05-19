@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseMealItems, splitItems } from "../../src/bot/parser/meal-items.js";
+import { parseMealItems, prepareMealText, splitItems } from "../../src/bot/parser/meal-items.js";
 
 // El bot recibe el texto ya pasado por normalize() (lowercase, sin acentos).
 
@@ -15,6 +15,45 @@ describe("splitItems", () => {
   });
   it("no parte 'milanesa de vaca' (de no es separador)", () => {
     expect(splitItems("milanesa de vaca")).toEqual(["milanesa de vaca"]);
+  });
+});
+
+describe("prepareMealText — separadores que normalize() borra", () => {
+  it("separa ítems por punto (caso real que rompía)", () => {
+    const t = prepareMealText("comí 4 scups de whey. 4 huevos. 100g de fideos cocidos");
+    expect(splitItems(t)).toEqual([
+      "comi 4 scups de whey",
+      "4 huevos",
+      "100 g de fideos cocidos",
+    ]);
+  });
+
+  it("separa por punto, coma, ';' y '+'", () => {
+    expect(splitItems(prepareMealText("2 huevos, pan; queso + jamon"))).toEqual([
+      "2 huevos",
+      "pan",
+      "queso",
+      "jamon",
+    ]);
+  });
+
+  it("NO rompe decimales 1.5 / 1,5", () => {
+    expect(prepareMealText("1.5 kg de pollo")).toBe("1.5 kg de pollo");
+    expect(prepareMealText("1,5 kg de pollo")).toBe("1,5 kg de pollo");
+  });
+
+  it('"4scups" pegado → "4 scups"', () => {
+    expect(prepareMealText("consumo 4scups de whey")).toBe("consumo 4 scups de whey");
+  });
+
+  it("el caso real parsea 3 ítems con scoop + verbo 'consumo'", () => {
+    const items = parseMealItems(
+      prepareMealText("consumo 4 scups de whey. 4 huevo. 100g de fideos"),
+    );
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({ mode: "measure", qty: 4, measure: "scup", food: "whey" });
+    expect(items[1]).toMatchObject({ mode: "units", qty: 4, food: "huevo" });
+    expect(items[2]).toMatchObject({ mode: "grams", qty: 100, food: "fideos" });
   });
 });
 

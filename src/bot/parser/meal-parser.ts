@@ -3,7 +3,7 @@ import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
 import { splitMealText } from "../../services/gemini.service.js";
 import { canUseAi, recordAiUse } from "../../services/ai-budget.service.js";
 import { logger } from "../../config/logger.js";
-import { parseMealItems, type ParsedItem } from "./meal-items.js";
+import { parseMealItems, prepareMealText, type ParsedItem } from "./meal-items.js";
 import { resolveFood, classifyState, type FoodState } from "./food-resolve.js";
 import type { FoodItem, FoodCandidate } from "../../repositories/food.repo.js";
 import type { MealStateClarify, PendingMeal } from "../session.store.js";
@@ -15,6 +15,8 @@ const GENERIC_MEASURE_G: Record<string, number> = {
   cucharada: 15, "cucharada sopera": 15, cucharadita: 5,
   taza: 200, vaso: 200, pocillo: 60, pote: 170, lata: 120,
   feta: 25, rodaja: 25, porcion: 150, punado: 25, rulo: 5,
+  // medidor de proteína/whey ≈ 30 g (estimación, sin food_portion).
+  scoop: 30, scup: 30, scoup: 30, medidor: 30,
 };
 
 export interface ParsedMealItem {
@@ -82,7 +84,10 @@ export async function parseMeal(
   const alias = await tryAlias(userId, normalized);
   if (alias) return alias;
 
-  const quickItems = parseMealItems(normalized);
+  // OJO: `normalized` ya viene sin "." / "," / ";" (los borró normalize()),
+  // así que un mensaje multi-ítem separado por puntos colapsaba en uno solo.
+  // Partimos del raw con prepareMealText() para recuperar los separadores.
+  const quickItems = parseMealItems(prepareMealText(rawText));
   if (quickItems.length > 0) {
     const res = await resolveItems(quickItems, rawText, "quick");
     if (res.items.length > 0 || res.source === "needs_food_clarification") return res;
@@ -99,7 +104,7 @@ export async function parseMeal(
 }
 
 const MEAL_VERB_PREFIX =
-  /^(?:me\s+)?(?:comi|come|comer|cene|ceno|cenar|desayune|desayuno|desayunar|almorce|almorzo|almorzar|merende|merendar|tome|tomo|tomar|probé|probe|probar)\s+/;
+  /^(?:me\s+)?(?:comi|come|comer|cene|ceno|cenar|desayune|desayuno|desayunar|almorce|almorzo|almorzar|merende|merendar|tome|tomo|tomar|consumi|consumo|consumir|ingeri|ingerir|probé|probe|probar)\s+/;
 
 function extractFoodHint(normalized: string): string {
   return normalized.replace(MEAL_VERB_PREFIX, "").trim() || normalized;

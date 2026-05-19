@@ -34,15 +34,17 @@ const MASS_UNIT_RE = "g|gr|grs|gs|gramos?|kg|kgs|kilos?|ml|cc|lts?|litros?";
 const MASS_KILO_RE = /^(kg|kgs|kilos?|lts?|litros?)$/;
 
 // Medidas caseras reconocidas (singular y plural colapsados al buscar).
+// "scoop"/"scup" → medidor de proteína/whey (lo escriben de mil formas).
 const MEASURES = [
   "plato playo", "plato hondo", "plato",
   "cucharada sopera", "cucharadita", "cucharada",
   "taza", "vaso", "pocillo", "pote", "lata",
   "feta", "rodaja", "porcion", "punado", "rulo", "puñado",
+  "scoop", "scup", "scoup", "medidor",
 ];
 
 const VERB_NOISE_RE =
-  /^(?:me\s+|te\s+|se\s+|hoy\s+|ayer\s+|anoche\s+|recien\s+|ahora\s+)*(?:comi|come|comer|comiendo|cene|ceno|cenar|cenando|desayune|desayuno|desayunar|almorce|almorzo|almorzar|almorzando|merende|merendar|merende|tome|tomo|tomar|probe|probar|morfe|engulli|me clave|me mande|me hice|me prepare)\s+/;
+  /^(?:me\s+|te\s+|se\s+|hoy\s+|ayer\s+|anoche\s+|recien\s+|ahora\s+)*(?:comi|come|comer|comiendo|cene|ceno|cenar|cenando|desayune|desayuno|desayunar|almorce|almorzo|almorzar|almorzando|merende|merendar|merende|tome|tomo|tomar|probe|probar|consumi|consumo|consumir|consumiendo|ingeri|ingerir|morfe|engulli|me clave|me mande|me hice|me prepare)\s+/;
 
 /** Quita verbo de comer / adverbios temporales del comienzo. */
 function stripVerb(seg: string): string {
@@ -53,6 +55,33 @@ function stripVerb(seg: string): string {
     s = s.replace(VERB_NOISE_RE, "").trim();
   } while (s !== prev);
   return s || seg.trim();
+}
+
+/**
+ * Prepara el texto CRUDO de una comida para el parser.
+ *
+ * Clave: `normalize()` (intent-classifier) borra `.`/`,`/`;`/`+` ANTES de
+ * llegar acá, así que un mensaje multi-ítem separado por puntos
+ * ("4 huevos. 100g de fideos") quedaba como UN solo ítem ilegible.
+ * Acá partimos del raw y convertimos esos separadores de cláusula en
+ * " y " (que `splitItems` sí sabe cortar), cuidando los decimales
+ * "1.5" / "1,5" para no romperlos.
+ */
+export function prepareMealText(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // saca acentos (é->e, ñ->n)
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, " ") // emoji
+    // separadores de cláusula -> " y ". Un "." / "," ENTRE dígitos es un
+    // decimal (1.5 / 1,5) y se respeta; todo lo demás corta.
+    .replace(/(?:[;:+|]|[\n\r]|(?<!\d)[.,]|[.,](?!\d))+/g, " y ")
+    .replace(/(\d)([a-z])/g, "$1 $2") // "4scups" -> "4 scups", "100g" -> "100 g"
+    .replace(/[¿¡!?_*`"'()[\]{}<>\\/@#$%^&=~]/g, " ") // ruido restante
+    .replace(/\b(?:y\s+){2,}/g, "y ") // colapsa "y y y"
+    .replace(/\s+/g, " ")
+    .replace(/^\s*y\s+|\s+y\s*$/g, "") // saca "y" colgado al inicio/fin
+    .trim();
 }
 
 /** Separa el mensaje en items por "y", "con", ",", "+", "mas". */
