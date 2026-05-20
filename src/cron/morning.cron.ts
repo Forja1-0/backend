@@ -1,6 +1,7 @@
 import { logger } from "../config/logger.js";
 import * as trainingRepo from "../repositories/training.repo.js";
 import { sendText } from "../services/evolution.service.js";
+import { logBotEvent, EventTypes } from "../services/events.service.js";
 
 /**
  * Recordatorio matutino de entrenamiento.
@@ -10,12 +11,14 @@ import { sendText } from "../services/evolution.service.js";
  */
 export async function runMorningReminder(): Promise<void> {
   logger.info("cron morning reminder: starting");
+  logBotEvent(null, EventTypes.CRON_MORNING_TICK, {});
 
   let users: Awaited<ReturnType<typeof trainingRepo.getAllUsersWithTodayTraining>>;
   try {
     users = await trainingRepo.getAllUsersWithTodayTraining();
   } catch (err) {
     logger.error("cron morning reminder: failed to fetch users", { err });
+    logBotEvent(null, "cron.morning_query_failed", { error: String(err) });
     return;
   }
 
@@ -26,7 +29,15 @@ export async function runMorningReminder(): Promise<void> {
   for (const u of users) {
     try {
       const msg = buildMorningMessage(u);
-      await sendText(u.wa_chat_id, msg);
+      await sendText(u.wa_chat_id, msg, {
+        userId: u.user_id,
+        category: "morning_reminder",
+        extra: { session_type: u.session_type, session_name: u.session_name ?? null },
+      });
+      logBotEvent(u.user_id, EventTypes.CRON_MORNING_REMINDER, {
+        session_type: u.session_type,
+        session_name: u.session_name ?? null,
+      });
       logger.info("cron morning reminder: sent", {
         userId: u.user_id,
         session: u.session_type,
@@ -36,6 +47,7 @@ export async function runMorningReminder(): Promise<void> {
         err,
         userId: u.user_id,
       });
+      logBotEvent(u.user_id, "cron.morning_reminder_failed", { error: String(err) });
     }
   }
 

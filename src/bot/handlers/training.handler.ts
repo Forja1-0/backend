@@ -6,6 +6,7 @@ import * as T from "../personality/templates.js";
 import { extractStandaloneNumber } from "../parser/normalize.js";
 import { matchTraining } from "../parser/training-matcher.js";
 import { logger } from "../../config/logger.js";
+import { logBotEvent, EventTypes } from "../../services/events.service.js";
 
 /**
  * Procesa "completé X" / "terminé X" / "listo".
@@ -42,13 +43,30 @@ export async function handleComplete(user: User, normalized: string): Promise<vo
   const log = await trainingRepo.logTrainingComplete(user, sessionName, matchedPlanId);
   setSession(jid, { flow: "rpe_capture", training_log_id: log.id });
 
+  logBotEvent(user.id, EventTypes.TRAINING_COMPLETED, {
+    session_name: sessionName,
+    plan_id: matchedPlanId ?? null,
+    training_log_id: log.id,
+    matched: match != null,
+    is_today: match?.is_today ?? null,
+    day_offset: dayOffset,
+  });
+
   if (match && !match.is_today && todayPlan && todayPlan.session_type !== "descanso") {
+    logBotEvent(user.id, EventTypes.TRAINING_DAY_SWAPPED, {
+      done_session: sessionName,
+      planned_session: todayPlan.session_name ?? todayPlan.session_type,
+    });
     await sendText(
       jid,
       T.trainingDaySwapped(sessionName, todayPlan.session_name ?? todayPlan.session_type),
+      { userId: user.id, category: "training_day_swapped" },
     );
   } else {
-    await sendText(jid, T.trainingComplete(sessionName));
+    await sendText(jid, T.trainingComplete(sessionName), {
+      userId: user.id,
+      category: "training_complete",
+    });
   }
   logger.debug("training match", { userId: user.id, match, dayOffset });
 }
@@ -70,13 +88,24 @@ export async function handleRpeResponse(user: User, text: string): Promise<void>
 
   const rpe = extractStandaloneNumber(text.trim().toLowerCase());
   if (rpe === null || rpe < 1 || rpe > 10) {
-    await sendText(jid, T.trainingNeedsNumber());
+    logBotEvent(user.id, "training.rpe_invalid", { raw: text });
+    await sendText(jid, T.trainingNeedsNumber(), {
+      userId: user.id,
+      category: "training_rpe_invalid",
+    });
     return;
   }
 
   await trainingRepo.setRpe(session.training_log_id, rpe);
   clearSession(jid);
-  await sendText(jid, T.trainingRpeSaved(rpe));
+  logBotEvent(user.id, EventTypes.TRAINING_RPE_SAVED, {
+    rpe,
+    training_log_id: session.training_log_id,
+  });
+  await sendText(jid, T.trainingRpeSaved(rpe), {
+    userId: user.id,
+    category: "training_rpe_saved",
+  });
 }
 
 export async function handleSkip(user: User): Promise<void> {
@@ -86,16 +115,29 @@ export async function handleSkip(user: User): Promise<void> {
   } catch (err) {
     logger.error("logTrainingSkip failed", { err, userId: user.id });
   }
-  await sendText(jid, T.trainingSkip());
+  logBotEvent(user.id, EventTypes.TRAINING_SKIPPED, { jid });
+  await sendText(jid, T.trainingSkip(), { userId: user.id, category: "training_skip" });
 }
 
 export async function handleQuery(user: User): Promise<void> {
   const jid = user.wa_chat_id!;
   const plan = await trainingRepo.getTodayPlan(user.id, user.timezone);
   if (!plan || plan.session_type === "descanso") {
-    await sendText(jid, T.trainingQueryRest());
+    logBotEvent(user.id, EventTypes.TRAINING_QUERY, {
+      has_session: false,
+      is_rest: plan?.session_type === "descanso",
+    });
+    await sendText(jid, T.trainingQueryRest(), {
+      userId: user.id,
+      category: "training_query_rest",
+    });
     return;
   }
+  logBotEvent(user.id, EventTypes.TRAINING_QUERY, {
+    has_session: true,
+    session_type: plan.session_type,
+    session_name: plan.session_name,
+  });
   await sendText(
     jid,
     T.trainingQuery({
@@ -103,6 +145,7 @@ export async function handleQuery(user: User): Promise<void> {
       type: plan.session_type,
       time: plan.approx_time,
     }),
+    { userId: user.id, category: "training_query" },
   );
 }
 

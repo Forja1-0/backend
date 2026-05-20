@@ -5,6 +5,7 @@ import { planFileUpload } from "../middleware/upload.js";
 import { BadRequest, NotFound } from "../utils/errors.js";
 import { logger } from "../config/logger.js";
 import { requireAuth, enforcePathUserMatchesSession } from "../middleware/require-auth.js";
+import { logEventFromRequest, EventTypes } from "../services/events.service.js";
 
 /**
  * API del perfil web (centro de control del atleta). Lecturas agregadas +
@@ -17,6 +18,10 @@ import { requireAuth, enforcePathUserMatchesSession } from "../middleware/requir
  * y el `:userId` del path debe coincidir con el de la sesion (anti-IDOR).
  * Si un atacante consigue una sesion valida, solo puede tocar su propio
  * perfil — nunca el de otro UUID.
+ *
+ * Instrumentacion BI: cada GET de seccion emite `profile.section_viewed`
+ * (la seccion va en el payload) y cada mutacion emite un evento dedicado
+ * con un payload que captura QUE cambio sin volcar PII innecesaria.
  */
 export const profileRoutes = Router();
 
@@ -50,6 +55,7 @@ profileRoutes.get("/:userId", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     const u = await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "identity" });
     res.json({
       user_id: u.id,
       name: u.name,
@@ -72,6 +78,7 @@ profileRoutes.get("/:userId/overview", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "overview" });
     res.json(await repo.getOverview(userId));
   } catch (err) {
     next(err);
@@ -83,6 +90,7 @@ profileRoutes.get("/:userId/nutrition", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "nutrition" });
     res.json(await repo.getNutrition(userId));
   } catch (err) {
     next(err);
@@ -94,6 +102,7 @@ profileRoutes.get("/:userId/frequent-meals", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "frequent_meals" });
     res.json({ meals: await repo.listFrequentMeals(userId) });
   } catch (err) {
     next(err);
@@ -108,6 +117,11 @@ profileRoutes.post("/:userId/frequent-meals", async (req, res, next) => {
     const { alias, ingredients } = mealBody.parse(req.body);
     const meal = await repo.createFrequentMeal(userId, alias, ingredients);
     logger.info("frequent meal created", { userId, id: meal.id });
+    logEventFromRequest(req, userId, EventTypes.PROFILE_FREQUENT_MEAL_CREATED, {
+      meal_id: meal.id,
+      ingredient_count: ingredients.length,
+      alias_length: alias.length,
+    });
     res.status(201).json(meal);
   } catch (err) {
     next(err);
@@ -123,6 +137,10 @@ profileRoutes.put("/:userId/frequent-meals/:id", async (req, res, next) => {
     const { alias, ingredients } = mealBody.parse(req.body);
     const meal = await repo.updateFrequentMeal(userId, id, alias, ingredients);
     if (!meal) throw NotFound("frequent meal not found");
+    logEventFromRequest(req, userId, EventTypes.PROFILE_FREQUENT_MEAL_UPDATED, {
+      meal_id: id,
+      ingredient_count: ingredients.length,
+    });
     res.json(meal);
   } catch (err) {
     next(err);
@@ -137,6 +155,7 @@ profileRoutes.delete("/:userId/frequent-meals/:id", async (req, res, next) => {
     await ensureUser(userId);
     const ok = await repo.deleteFrequentMeal(userId, id);
     if (!ok) throw NotFound("frequent meal not found");
+    logEventFromRequest(req, userId, EventTypes.PROFILE_FREQUENT_MEAL_DELETED, { meal_id: id });
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -155,6 +174,13 @@ profileRoutes.put("/:userId/restrictions", async (req, res, next) => {
       })
       .parse(req.body);
     const row = await repo.upsertRestrictions(userId, body.flags, body.other ?? null);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_RESTRICTIONS_UPDATED, {
+      active_flags: Object.entries(body.flags)
+        .filter(([, v]) => v)
+        .map(([k]) => k),
+      flag_count: Object.values(body.flags).filter(Boolean).length,
+      has_other: !!body.other,
+    });
     res.json(row);
   } catch (err) {
     next(err);
@@ -166,6 +192,7 @@ profileRoutes.get("/:userId/training", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "training" });
     res.json(await repo.getTraining(userId));
   } catch (err) {
     next(err);
@@ -177,6 +204,7 @@ profileRoutes.get("/:userId/health", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "health" });
     res.json(await repo.getHealth(userId));
   } catch (err) {
     next(err);
@@ -195,7 +223,14 @@ profileRoutes.put("/:userId/body", async (req, res, next) => {
         height_cm: z.number().positive().max(260).optional(),
       })
       .parse(req.body);
-    res.json(await repo.updateBody(userId, patch));
+    const updated = await repo.updateBody(userId, patch);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_BODY_UPDATED, {
+      fields: Object.keys(patch),
+      weight_kg: patch.weight_kg ?? null,
+      body_fat_pct: patch.body_fat_pct ?? null,
+      height_cm: patch.height_cm ?? null,
+    });
+    res.json(updated);
   } catch (err) {
     next(err);
   }
@@ -207,7 +242,11 @@ profileRoutes.put("/:userId/injuries", async (req, res, next) => {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
     const body = z.object({ active_injuries: z.array(z.unknown()) }).parse(req.body);
-    res.json(await repo.updateActiveInjuries(userId, body.active_injuries));
+    const updated = await repo.updateActiveInjuries(userId, body.active_injuries);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_INJURIES_UPDATED, {
+      active_count: body.active_injuries.length,
+    });
+    res.json(updated);
   } catch (err) {
     next(err);
   }
@@ -218,6 +257,7 @@ profileRoutes.get("/:userId/journey", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "journey" });
     res.json(await repo.getJourney(userId));
   } catch (err) {
     next(err);
@@ -241,6 +281,10 @@ profileRoutes.patch("/:userId", async (req, res, next) => {
       .parse(req.body);
     const row = await repo.updateIdentity(userId, patch);
     if (!row) throw BadRequest("nada para actualizar");
+    logEventFromRequest(req, userId, EventTypes.PROFILE_IDENTITY_UPDATED, {
+      fields: Object.keys(patch),
+      // Solo loguear que cambio, no los valores nuevos — PII.
+    });
     res.json(row);
   } catch (err) {
     next(err);
@@ -255,6 +299,13 @@ profileRoutes.delete("/:userId", async (req, res, next) => {
     const ok = await repo.deleteUser(userId);
     if (!ok) throw NotFound("user not found");
     logger.info("account deleted", { userId });
+    // Loguear ANTES de que la FK ON DELETE SET NULL nulee el user_id en
+    // system_events. user_id queda como null pero el evento queda con el
+    // UUID en el payload para auditoria.
+    logEventFromRequest(req, userId, EventTypes.PROFILE_ACCOUNT_DELETED, {
+      target_user_id: userId,
+      source: "profile_route",
+    });
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -267,6 +318,7 @@ profileRoutes.get("/:userId/export", async (req, res, next) => {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
     const data = await repo.exportAll(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_EXPORTED, {});
     res
       .setHeader("Content-Disposition", `attachment; filename="forja-export-${userId}.json"`)
       .json(data);
@@ -289,7 +341,15 @@ profileRoutes.put("/:userId/nutrition/plan", async (req, res, next) => {
         nutritionist_name: z.string().max(120).nullable().optional(),
       })
       .parse(req.body);
-    res.json(await repo.updateNutritionPlan(userId, d));
+    const updated = await repo.updateNutritionPlan(userId, d);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_NUTRITION_PLAN_UPDATED, {
+      target_kcal: d.target_kcal,
+      target_protein_g: d.target_protein_g,
+      target_carbs_g: d.target_carbs_g,
+      target_fat_g: d.target_fat_g,
+      has_nutritionist: d.nutritionist_name != null,
+    });
+    res.json(updated);
   } catch (err) {
     next(err);
   }
@@ -307,6 +367,11 @@ profileRoutes.post("/:userId/nutrition/plan/file", planFileUpload, async (req, r
       name: req.file.originalname,
     });
     logger.info("profile nutrition plan uploaded", { userId, bytes: req.file.size });
+    logEventFromRequest(req, userId, EventTypes.PROFILE_PLAN_UPLOADED, {
+      file_id: saved.file_id,
+      bytes: req.file.size,
+      mime: req.file.mimetype,
+    });
     res.json({ ok: true, id: saved.file_id });
   } catch (err) {
     next(err);
@@ -320,6 +385,10 @@ profileRoutes.get("/:userId/nutrition/plan/file", async (req, res, next) => {
     await ensureUser(userId);
     const f = await repo.getNutritionPlanFileBytes(userId);
     if (!f || !f.raw_file_bytes) throw NotFound("sin plan cargado");
+    logEventFromRequest(req, userId, EventTypes.PROFILE_PLAN_DOWNLOADED, {
+      bytes: f.raw_file_bytes.length,
+      mime: f.raw_file_mime ?? null,
+    });
     res
       .setHeader("Content-Type", f.raw_file_mime ?? "application/octet-stream")
       .setHeader("Content-Disposition", `inline; filename="${f.raw_file_name ?? "plan"}"`)
@@ -336,6 +405,7 @@ profileRoutes.delete("/:userId/nutrition/plan/file", async (req, res, next) => {
     await ensureUser(userId);
     const ok = await repo.deactivateNutritionPlanFile(userId);
     if (!ok) throw NotFound("sin plan cargado");
+    logEventFromRequest(req, userId, EventTypes.PROFILE_PLAN_DELETED, {});
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -360,6 +430,14 @@ profileRoutes.put("/:userId/medical", async (req, res, next) => {
       .parse(req.body);
     const row = await repo.updateMedical(userId, body as Record<string, unknown[]>);
     if (!row) throw BadRequest("nada para actualizar");
+    logEventFromRequest(req, userId, EventTypes.PROFILE_MEDICAL_UPDATED, {
+      fields: Object.keys(body),
+      chronic_count: body.chronic_conditions?.length,
+      allergies_count: body.allergies?.length,
+      medications_count: body.medications?.length,
+      past_injuries_count: body.past_injuries?.length,
+      active_injuries_count: body.active_injuries?.length,
+    });
     res.json(row);
   } catch (err) {
     next(err);
@@ -371,6 +449,7 @@ profileRoutes.get("/:userId/documents", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "documents" });
     res.json({ documents: await repo.listMedicalDocuments(userId) });
   } catch (err) {
     next(err);
@@ -400,6 +479,13 @@ profileRoutes.post("/:userId/documents", planFileUpload, async (req, res, next) 
       size: req.file.size,
     });
     logger.info("medical document uploaded", { userId, slot: meta.slot, id: doc.id });
+    logEventFromRequest(req, userId, EventTypes.PROFILE_DOC_UPLOADED, {
+      document_id: doc.id,
+      slot: meta.slot,
+      doc_type: meta.doc_type,
+      bytes: req.file.size,
+      mime: req.file.mimetype,
+    });
     res.status(201).json(doc);
   } catch (err) {
     next(err);
@@ -414,6 +500,11 @@ profileRoutes.get("/:userId/documents/:id/file", async (req, res, next) => {
     await ensureUser(userId);
     const f = await repo.getMedicalDocumentBytes(userId, id);
     if (!f) throw NotFound("documento no encontrado");
+    logEventFromRequest(req, userId, EventTypes.PROFILE_DOC_DOWNLOADED, {
+      document_id: id,
+      bytes: f.raw_file_bytes.length,
+      mime: f.raw_file_mime,
+    });
     res
       .setHeader("Content-Type", f.raw_file_mime)
       .setHeader("Content-Disposition", `inline; filename="${f.raw_file_name}"`)
@@ -431,6 +522,7 @@ profileRoutes.delete("/:userId/documents/:id", async (req, res, next) => {
     await ensureUser(userId);
     const ok = await repo.deleteMedicalDocument(userId, id);
     if (!ok) throw NotFound("documento no encontrado");
+    logEventFromRequest(req, userId, EventTypes.PROFILE_DOC_DELETED, { document_id: id });
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -442,6 +534,7 @@ profileRoutes.get("/:userId/preferences", async (req, res, next) => {
   try {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_SECTION_VIEWED, { section: "preferences" });
     res.json(await repo.getPreferences(userId));
   } catch (err) {
     next(err);
@@ -454,7 +547,11 @@ profileRoutes.put("/:userId/preferences", async (req, res, next) => {
     const userId = uuid.parse(req.params.userId);
     await ensureUser(userId);
     const prefs = z.record(z.unknown()).parse(req.body);
-    res.json(await repo.upsertPreferences(userId, prefs));
+    const updated = await repo.upsertPreferences(userId, prefs);
+    logEventFromRequest(req, userId, EventTypes.PROFILE_PREFERENCES_UPDATED, {
+      keys: Object.keys(prefs),
+    });
+    res.json(updated);
   } catch (err) {
     next(err);
   }

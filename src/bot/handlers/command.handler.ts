@@ -3,12 +3,16 @@ import { query } from "../../config/db.js";
 import { env } from "../../config/env.js";
 import { sendText } from "../../services/evolution.service.js";
 import { issueWhatsappToken } from "../../services/auth-token.service.js";
-import { logEvent } from "../../services/events.service.js";
-import { setSession, clearSession, getSession } from "../session.store.js";
+import { logEvent, logBotEvent, EventTypes } from "../../services/events.service.js";
+import { setSession, clearSession } from "../session.store.js";
 import * as T from "../personality/templates.js";
 
 export async function handleHelp(user: User): Promise<void> {
-  await sendText(user.wa_chat_id!, T.help(user.name));
+  logBotEvent(user.id, EventTypes.WA_COMMAND_RECEIVED, { command: "help" });
+  await sendText(user.wa_chat_id!, T.help(user.name), {
+    userId: user.id,
+    category: "command_help",
+  });
 }
 
 export async function handleProfile(user: User): Promise<void> {
@@ -19,21 +23,28 @@ export async function handleProfile(user: User): Promise<void> {
 
   await logEvent({
     userId: user.id,
-    type: "auth.token_issued",
+    type: EventTypes.AUTH_TOKEN_ISSUED,
     payload: { source: "wa_command_perfil", expires_at: expiresAt.toISOString() },
   });
   await logEvent({
     userId: user.id,
-    type: "wa.command_received",
+    type: EventTypes.WA_COMMAND_RECEIVED,
     payload: { command: "perfil" },
   });
 
-  await sendText(user.wa_chat_id!, T.profile(user, link));
+  await sendText(user.wa_chat_id!, T.profile(user, link), {
+    userId: user.id,
+    category: "command_perfil",
+  });
 }
 
 export async function handleBaja(user: User): Promise<void> {
+  logBotEvent(user.id, EventTypes.BAJA_REQUESTED, { jid: user.wa_chat_id });
   setSession(user.wa_chat_id!, { flow: "baja_confirm" });
-  await sendText(user.wa_chat_id!, T.bajaConfirm());
+  await sendText(user.wa_chat_id!, T.bajaConfirm(), {
+    userId: user.id,
+    category: "baja_confirm",
+  });
 }
 
 /**
@@ -44,8 +55,13 @@ export async function handleBajaConfirm(user: User, normalized: string): Promise
   clearSession(jid);
   if (/^(confirmar baja|confirmo|si confirmo|baja confirmada)$/.test(normalized)) {
     await query(`UPDATE users SET active = false WHERE id = $1`, [user.id]);
-    await sendText(jid, T.bajaDone());
+    logBotEvent(user.id, EventTypes.BAJA_CONFIRMED, { jid });
+    await sendText(jid, T.bajaDone(), { userId: user.id, category: "baja_done" });
     return;
   }
-  await sendText(jid, "Cancelado. Seguís activo.");
+  logBotEvent(user.id, EventTypes.BAJA_CANCELLED, { jid, normalized });
+  await sendText(jid, "Cancelado. Seguís activo.", {
+    userId: user.id,
+    category: "baja_cancelled",
+  });
 }

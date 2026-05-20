@@ -19,6 +19,7 @@ import { classifyState } from "../parser/food-resolve.js";
 import { normalize } from "../parser/normalize.js";
 import * as T from "../personality/templates.js";
 import { logger } from "../../config/logger.js";
+import { logBotEvent, EventTypes } from "../../services/events.service.js";
 
 const CONFIDENCE_AUTOSAVE = 0.7;
 
@@ -41,9 +42,18 @@ export async function handleMealLog(
     result = await parseMeal(user.id, normalized, rawText);
   } catch (err) {
     logger.error("meal parser failed", { err, rawText });
-    await sendText(jid, T.mealFailed());
+    logBotEvent(user.id, EventTypes.MEAL_FAILED, { stage: "parse", error: String(err) });
+    await sendText(jid, T.mealFailed(), { userId: user.id, category: "meal_failed" });
     return true;
   }
+
+  logBotEvent(user.id, EventTypes.MEAL_PARSED, {
+    source: result.source,
+    confidence: result.confidence,
+    is_estimate: result.is_estimate,
+    item_count: result.items?.length ?? 0,
+    kcal: result.totals?.kcal ?? 0,
+  });
 
   if (result.source === "needs_clarification") {
     setSession(jid, {
@@ -52,7 +62,11 @@ export async function handleMealLog(
       normalized_original: normalized,
       food_hint: result.food_hint ?? normalized,
     });
-    await sendText(jid, T.mealClarify(result.food_hint ?? normalized));
+    logBotEvent(user.id, EventTypes.MEAL_CLARIFY_REQUESTED, { food_hint: result.food_hint ?? normalized });
+    await sendText(jid, T.mealClarify(result.food_hint ?? normalized), {
+      userId: user.id,
+      category: "meal_clarify",
+    });
     return true;
   }
 
@@ -64,7 +78,11 @@ export async function handleMealLog(
       is_estimate: result.is_estimate,
       raw_input: result.raw_input ?? rawText,
     });
-    await sendText(jid, T.mealStateClarify(result.state_clarify));
+    logBotEvent(user.id, EventTypes.MEAL_STATE_CLARIFY, {});
+    await sendText(jid, T.mealStateClarify(result.state_clarify), {
+      userId: user.id,
+      category: "meal_state_clarify",
+    });
     return true;
   }
 
@@ -73,7 +91,14 @@ export async function handleMealLog(
     const first = fc.queue[0];
     if (first) {
       setSession(jid, { flow: "meal_food_clarify", clarify: fc });
-      await sendText(jid, T.mealFoodClarify(first.item.food, first.options));
+      logBotEvent(user.id, EventTypes.MEAL_FOOD_CLARIFY, {
+        food: first.item.food,
+        option_count: first.options.length,
+      });
+      await sendText(jid, T.mealFoodClarify(first.item.food, first.options), {
+        userId: user.id,
+        category: "meal_food_clarify",
+      });
       return true;
     }
   }
@@ -86,6 +111,16 @@ export async function handleMealLog(
 
   if (result.confidence >= CONFIDENCE_AUTOSAVE) {
     await persistMeal(user, rawText, result);
+    logBotEvent(user.id, EventTypes.MEAL_LOGGED, {
+      source: result.source,
+      auto_saved: true,
+      is_estimate: result.is_estimate,
+      kcal: result.totals.kcal,
+      protein_g: result.totals.protein,
+      carbs_g: result.totals.carbs,
+      fat_g: result.totals.fat,
+      item_count: result.items.length,
+    });
     await sendMealResult(user, T.mealRegistered(result.items, result.totals, result.is_estimate));
     return true;
   }
@@ -98,7 +133,14 @@ export async function handleMealLog(
     raw_input: rawText,
   };
   setSession(jid, { flow: "meal_confirm", meal: pending });
-  await sendText(jid, T.mealConfirmAsk(result.items, result.totals));
+  logBotEvent(user.id, EventTypes.MEAL_CONFIRM_REQUESTED, {
+    kcal: result.totals.kcal,
+    item_count: result.items.length,
+  });
+  await sendText(jid, T.mealConfirmAsk(result.items, result.totals), {
+    userId: user.id,
+    category: "meal_confirm_ask",
+  });
   return true;
 }
 
@@ -115,7 +157,14 @@ export async function handleMealConfirm(
   clearSession(jid);
 
   if (decision === "cancel") {
-    await sendText(jid, T.mealConfirmCancelled());
+    logBotEvent(user.id, EventTypes.MEAL_CANCELLED, {
+      kcal: pending.totals.kcal,
+      item_count: pending.parsed_items.length,
+    });
+    await sendText(jid, T.mealConfirmCancelled(), {
+      userId: user.id,
+      category: "meal_confirm_cancelled",
+    });
     return;
   }
 
@@ -126,6 +175,14 @@ export async function handleMealConfirm(
     is_estimate: pending.is_estimate,
     confidence: 1,
     source: "descriptive",
+  });
+  logBotEvent(user.id, EventTypes.MEAL_CONFIRMED, {
+    is_estimate: pending.is_estimate,
+    kcal: pending.totals.kcal,
+    protein_g: pending.totals.protein,
+    carbs_g: pending.totals.carbs,
+    fat_g: pending.totals.fat,
+    item_count: pending.parsed_items.length,
   });
   await sendMealResult(user, T.mealRegistered(pending.parsed_items, pending.totals, pending.is_estimate));
 }
@@ -152,16 +209,28 @@ export async function handleMealClarify(
     result = await parseMeal(user.id, combinedNormalized, combinedRaw, { skipClarification: true });
   } catch (err) {
     logger.error("meal parser failed on clarify", { err, combinedRaw });
-    await sendText(jid, T.mealFailed());
+    logBotEvent(user.id, EventTypes.MEAL_FAILED, { stage: "clarify_parse", error: String(err) });
+    await sendText(jid, T.mealFailed(), { userId: user.id, category: "meal_failed" });
     return;
   }
 
   if (result.source === "none" || result.items.length === 0) {
-    await sendText(jid, T.mealFailed());
+    logBotEvent(user.id, EventTypes.MEAL_FAILED, { stage: "clarify_no_items" });
+    await sendText(jid, T.mealFailed(), { userId: user.id, category: "meal_failed" });
     return;
   }
 
   await persistMeal(user, combinedRaw, result);
+  logBotEvent(user.id, EventTypes.MEAL_LOGGED, {
+    source: result.source,
+    via_clarify: true,
+    is_estimate: result.is_estimate,
+    kcal: result.totals.kcal,
+    protein_g: result.totals.protein,
+    carbs_g: result.totals.carbs,
+    fat_g: result.totals.fat,
+    item_count: result.items.length,
+  });
 
   // Si la cantidad la estimo la AI (no vino del usuario), avisamos explicitamente.
   const wasEstimated = result.source === "ai" || result.is_estimate;
@@ -206,6 +275,17 @@ export async function handleMealStateClarify(
     confidence: 1,
     source: "quick",
   });
+  logBotEvent(user.id, EventTypes.MEAL_LOGGED, {
+    source: "quick",
+    via_state_clarify: true,
+    state_choice: choice,
+    is_estimate: session.is_estimate,
+    kcal: totals.kcal,
+    protein_g: totals.protein,
+    carbs_g: totals.carbs,
+    fat_g: totals.fat,
+    item_count: items.length,
+  });
   await sendMealResult(user, T.mealRegistered(items, totals, session.is_estimate));
 }
 
@@ -228,7 +308,10 @@ async function sendMealResult(user: User, baseMessage: string): Promise<void> {
   } catch (err) {
     logger.error("coach block failed", { err, userId: user.id });
   }
-  await sendText(jid, baseMessage + suffix);
+  await sendText(jid, baseMessage + suffix, {
+    userId: user.id,
+    category: "meal_registered",
+  });
 }
 
 async function persistMeal(user: User, rawText: string, result: ParseResult): Promise<void> {
@@ -279,7 +362,11 @@ export async function handleMealFoodClarify(
   const num = parseInt(answer.trim(), 10);
   if (isNaN(num) || num < 1 || num > current.options.length) {
     // No entendimos, repetir la pregunta
-    await sendText(jid, T.mealFoodClarify(current.item.food, current.options));
+    logBotEvent(user.id, "meal.food_clarify_invalid", { raw: answer });
+    await sendText(jid, T.mealFoodClarify(current.item.food, current.options), {
+      userId: user.id,
+      category: "meal_food_clarify_retry",
+    });
     return;
   }
 
@@ -288,7 +375,8 @@ export async function handleMealFoodClarify(
 
   if (!food) {
     clearSession(jid);
-    await sendText(jid, T.mealFailed());
+    logBotEvent(user.id, EventTypes.MEAL_FAILED, { stage: "food_clarify_missing_food" });
+    await sendText(jid, T.mealFailed(), { userId: user.id, category: "meal_failed" });
     return;
   }
 
@@ -308,7 +396,15 @@ export async function handleMealFoodClarify(
   if (fc.queue.length > 0) {
     const next = fc.queue[0];
     setSession(jid, { flow: "meal_food_clarify", clarify: fc });
-    await sendText(jid, T.mealFoodClarify(next.item.food, next.options));
+    logBotEvent(user.id, EventTypes.MEAL_FOOD_CLARIFY, {
+      food: next.item.food,
+      option_count: next.options.length,
+      remaining: fc.queue.length,
+    });
+    await sendText(jid, T.mealFoodClarify(next.item.food, next.options), {
+      userId: user.id,
+      category: "meal_food_clarify",
+    });
     return;
   }
 
@@ -332,6 +428,16 @@ export async function handleMealFoodClarify(
     is_estimate: fc.is_estimate,
     confidence: 0.9,
     source: "quick",
+  });
+  logBotEvent(user.id, EventTypes.MEAL_LOGGED, {
+    source: "quick",
+    via_food_clarify: true,
+    is_estimate: fc.is_estimate,
+    kcal: totals.kcal,
+    protein_g: totals.protein,
+    carbs_g: totals.carbs,
+    fat_g: totals.fat,
+    item_count: items.length,
   });
   await sendMealResult(user, T.mealRegistered(items, totals, fc.is_estimate));
 }

@@ -13,6 +13,7 @@ import { BadRequest, NotFound } from "../utils/errors.js";
 import { logger } from "../config/logger.js";
 import { sendText } from "../services/evolution.service.js";
 import * as T from "../bot/personality/templates.js";
+import { logEventFromRequest, EventTypes } from "../services/events.service.js";
 
 export const onboardingRoutes = Router();
 
@@ -27,6 +28,10 @@ onboardingRoutes.post("/start", async (req, res, next) => {
     const body = startBody.parse(req.body ?? {});
     const user = await repo.createUser(body);
     logger.info("onboarding started", { userId: user.id });
+    logEventFromRequest(req, user.id, EventTypes.ONBOARDING_STARTED, {
+      has_email: body.email != null,
+      has_phone: body.phone_wa != null,
+    });
     res.status(201).json({
       user_id: user.id,
       onboarding_step: user.onboarding_step,
@@ -39,12 +44,21 @@ onboardingRoutes.post("/start", async (req, res, next) => {
 
 // PUT /api/onboarding/:userId/step/:n
 onboardingRoutes.put("/:userId/step/:n", async (req, res, next) => {
+  const userIdRaw = req.params.userId;
+  const stepRaw = req.params.n;
   try {
-    const userId = z.string().uuid().parse(req.params.userId);
-    const stepNum = z.coerce.number().int().min(1).max(7).parse(req.params.n);
+    const userId = z.string().uuid().parse(userIdRaw);
+    const stepNum = z.coerce.number().int().min(1).max(7).parse(stepRaw);
 
     const user = await repo.getUser(userId);
-    if (!user) throw NotFound("user not found");
+    if (!user) {
+      logEventFromRequest(req, null, EventTypes.ONBOARDING_STEP_FAILED, {
+        step: stepNum,
+        reason: "user_not_found",
+        target_user_id: userId,
+      });
+      throw NotFound("user not found");
+    }
 
     const schema = stepSchemas[stepNum];
     if (!schema) throw BadRequest(`invalid step: ${stepNum}`);
@@ -62,8 +76,26 @@ onboardingRoutes.put("/:userId/step/:n", async (req, res, next) => {
     }
 
     logger.info("onboarding step saved", { userId, step: stepNum });
+    logEventFromRequest(req, userId, EventTypes.ONBOARDING_STEP_SAVED, {
+      step: stepNum,
+      // Indicadores semanticos sin volcar PII al log
+      field_count: Object.keys((data as Record<string, unknown>) ?? {}).length,
+      previous_step: user.onboarding_step,
+    });
     res.json({ ok: true, step: stepNum, result });
   } catch (err) {
+    // Capturamos errores de validacion (Zod), BadRequest, NotFound, etc. Si
+    // el userId no parseaba ya tiramos arriba — aca lo dejamos pasar para
+    // que el error-handler responda como siempre.
+    const userIdMaybe = (() => {
+      const r = z.string().uuid().safeParse(userIdRaw);
+      return r.success ? r.data : null;
+    })();
+    logEventFromRequest(req, userIdMaybe, EventTypes.ONBOARDING_STEP_FAILED, {
+      step: Number(stepRaw),
+      error_name: err instanceof Error ? err.name : "unknown",
+      error_message: err instanceof Error ? err.message.slice(0, 200) : null,
+    });
     next(err);
   }
 });
@@ -82,6 +114,10 @@ onboardingRoutes.post("/:userId/parse-training-plan", async (req, res, next) => 
     const parsed = await parseTrainingPlan(text);
 
     if (!parsed) {
+      logEventFromRequest(req, userId, EventTypes.ONBOARDING_TRAINING_PARSE_FAILED, {
+        text_length: text.length,
+        reason: "gemini_no_parse",
+      });
       throw BadRequest("no pude interpretar el plan — revisa el texto o cargalo a mano");
     }
 
@@ -89,6 +125,11 @@ onboardingRoutes.post("/:userId/parse-training-plan", async (req, res, next) => 
       userId,
       days: parsed.days.length,
       totalExercises: parsed.days.reduce((acc, d) => acc + d.exercises.length, 0),
+    });
+    logEventFromRequest(req, userId, EventTypes.ONBOARDING_TRAINING_PARSED, {
+      text_length: text.length,
+      days: parsed.days.length,
+      total_exercises: parsed.days.reduce((acc, d) => acc + d.exercises.length, 0),
     });
     res.json({ ok: true, parsed });
   } catch (err) {
@@ -124,6 +165,16 @@ onboardingRoutes.post(
         bytes: req.file.size,
         meals: parsed.meal_distribution.length,
         kcal: parsed.targets.kcal,
+      });
+      logEventFromRequest(req, userId, EventTypes.ONBOARDING_NUTRITION_UPLOADED, {
+        file_size: req.file.size,
+        file_mime: req.file.mimetype,
+        meals: parsed.meal_distribution.length,
+        kcal: parsed.targets.kcal,
+        protein_g: parsed.targets.protein_g,
+        carbs_g: parsed.targets.carbs_g,
+        fat_g: parsed.targets.fat_g,
+        parser_version: PARSER_VERSION,
       });
       res.json({ ok: true, id: saved.file_id, parsed });
     } catch (err) {
@@ -162,6 +213,14 @@ onboardingRoutes.post(
         exercises: parsed.days.reduce((acc, d) => acc + d.exercises.length, 0),
         protocols: parsed.rehab_protocols.length,
       });
+      logEventFromRequest(req, userId, EventTypes.ONBOARDING_TRAINING_UPLOADED, {
+        file_size: req.file.size,
+        file_mime: req.file.mimetype,
+        days: saved.days,
+        exercises: parsed.days.reduce((acc, d) => acc + d.exercises.length, 0),
+        protocols: parsed.rehab_protocols.length,
+        parser_version: PARSER_VERSION,
+      });
       res.json({ ok: true, id: saved.file_id, parsed });
     } catch (err) {
       next(err);
@@ -185,6 +244,9 @@ onboardingRoutes.post("/:userId/consent", async (req, res, next) => {
 
     const consent = await repo.saveConsent(userId, data, ip, userAgent);
     logger.info("consent saved", { userId });
+    logEventFromRequest(req, userId, EventTypes.ONBOARDING_CONSENT_SAVED, {
+      consented_at: consent.consented_at,
+    });
 
     // Welcome / tutorial inicial via WhatsApp. Best-effort: si falla (numero
     // invalido, Evolution caido, usuario no escribio nunca al bot) no rompemos
@@ -192,13 +254,23 @@ onboardingRoutes.post("/:userId/consent", async (req, res, next) => {
     const dest = user.wa_chat_id ?? user.phone_wa;
     if (dest) {
       try {
-        await sendText(dest, T.welcome(user.name));
+        await sendText(dest, T.welcome(user.name), {
+          userId,
+          category: "onboarding_welcome",
+        });
         logger.info("welcome sent", { userId, dest });
+        logEventFromRequest(req, userId, EventTypes.ONBOARDING_WELCOME_SENT, { dest_kind: user.wa_chat_id ? "wa_chat_id" : "phone_wa" });
       } catch (err) {
         logger.warn("welcome send failed", { userId, dest, err });
+        logEventFromRequest(req, userId, EventTypes.ONBOARDING_WELCOME_FAILED, {
+          error: err instanceof Error ? err.message.slice(0, 200) : String(err),
+        });
       }
     } else {
       logger.info("welcome skipped: no destination", { userId });
+      logEventFromRequest(req, userId, EventTypes.ONBOARDING_WELCOME_FAILED, {
+        reason: "no_destination",
+      });
     }
 
     res.json({ ok: true, consented_at: consent.consented_at });
@@ -213,6 +285,10 @@ onboardingRoutes.get("/:userId", async (req, res, next) => {
     const userId = z.string().uuid().parse(req.params.userId);
     const user = await repo.getUser(userId);
     if (!user) throw NotFound("user not found");
+    logEventFromRequest(req, userId, EventTypes.ONBOARDING_FETCHED, {
+      onboarding_step: user.onboarding_step,
+      active: user.active,
+    });
     res.json({
       user_id: user.id,
       name: user.name,

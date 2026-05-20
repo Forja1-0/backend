@@ -5,6 +5,7 @@ import * as dailyRepo from "../../repositories/daily.repo.js";
 import { assessDay, localHour } from "../personality/coach.js";
 import { buildCoachReco } from "../coach-reco.js";
 import * as T from "../personality/templates.js";
+import { logBotEvent, EventTypes } from "../../services/events.service.js";
 
 /**
  * "Cuanta prote me falta", "cuantas kcal llevo", "macros del dia".
@@ -15,12 +16,26 @@ export async function handleNutritionQuery(user: User): Promise<void> {
   const jid = user.wa_chat_id!;
   const row = await dailyRepo.getDailyRemaining(user.id);
   if (!row) {
-    await sendText(jid, T.nutritionNoPlan());
+    logBotEvent(user.id, EventTypes.QUERY_NO_PLAN, { kind: "nutrition" });
+    await sendText(jid, T.nutritionNoPlan(), {
+      userId: user.id,
+      category: "nutrition_no_plan",
+    });
     return;
   }
   const assessment = assessDay(row, localHour(user.timezone));
   const reco = await buildCoachReco(assessment);
-  await sendText(jid, T.coachReport(assessment, reco));
+  logBotEvent(user.id, EventTypes.QUERY_NUTRITION, {
+    headline: assessment.headline,
+    remaining_kcal: row.remaining_kcal ?? null,
+    remaining_protein: row.remaining_protein ?? null,
+    local_hour: localHour(user.timezone),
+    early_alert: assessment.earlyAlert ? true : false,
+  });
+  await sendText(jid, T.coachReport(assessment, reco), {
+    userId: user.id,
+    category: "nutrition_query",
+  });
 }
 
 /**
@@ -44,14 +59,26 @@ export async function handleProgressQuery(user: User): Promise<void> {
   );
   const r = rows[0];
   if (!r || r.days_logged === 0) {
-    await sendText(jid, "Todavía no tengo datos de esta semana. Cargá tus comidas y entrenamientos y la próxima te respondo con números.");
+    logBotEvent(user.id, EventTypes.QUERY_PROGRESS, { has_data: false });
+    await sendText(
+      jid,
+      "Todavía no tengo datos de esta semana. Cargá tus comidas y entrenamientos y la próxima te respondo con números.",
+      { userId: user.id, category: "progress_no_data" },
+    );
     return;
   }
+  logBotEvent(user.id, EventTypes.QUERY_PROGRESS, {
+    has_data: true,
+    avg_score: r.avg_score,
+    days_logged: r.days_logged,
+    training_days: r.training_days,
+  });
   await sendText(
     jid,
     `📈 *Últimos 7 días*\n\n` +
       `• Score promedio: *${r.avg_score ?? "—"}/100*\n` +
       `• Días con registro: ${r.days_logged}/7\n` +
       `• Entrenamientos: ${r.training_days}`,
+    { userId: user.id, category: "progress_report" },
   );
 }

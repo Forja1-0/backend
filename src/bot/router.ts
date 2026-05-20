@@ -4,6 +4,7 @@ import { classify } from "./parser/intent-classifier.js";
 import { matchTraining } from "./parser/training-matcher.js";
 import { logger } from "../config/logger.js";
 import { sendText } from "../services/evolution.service.js";
+import { logBotEvent, EventTypes } from "../services/events.service.js";
 
 import { handleComplete, handleRpeResponse, handleSkip, handleQuery as handleTrainingQuery } from "./handlers/training.handler.js";
 import { handleCheckinResponse } from "./handlers/checkin.handler.js";
@@ -36,6 +37,10 @@ export async function routeMessage(user: User, rawText: string | null): Promise<
 
   // ── 1. SESION ACTIVA ──────────────────────────────────────
   if (session) {
+    logBotEvent(user.id, "wa.session_dispatch", {
+      jid,
+      flow: session.flow,
+    });
     if (await dispatchSession(user, rawText, session)) return;
     // Si el handler de sesion no consumio el mensaje, caemos al classifier.
   }
@@ -43,6 +48,13 @@ export async function routeMessage(user: User, rawText: string | null): Promise<
   // ── 2. CLASSIFY ──────────────────────────────────────────
   const c = classify(rawText);
   logger.debug("classified", { jid, intent: c.intent, confidence: c.confidence, normalized: c.normalized });
+  logBotEvent(user.id, EventTypes.WA_INTENT_CLASSIFIED, {
+    jid,
+    intent: c.intent,
+    confidence: c.confidence,
+    token_count: c.tokens.length,
+    has_active_session: session != null,
+  });
 
   // Confianza alta: dispatch directo.
   if (c.confidence >= 0.7) {
@@ -165,7 +177,12 @@ async function dispatchByIntent(
     }
 
     case "correction":
-      await sendText(user.wa_chat_id!, "Mandame de nuevo la comida con las cantidades correctas y piso la anterior, o decime qué querés cambiar.");
+      logBotEvent(user.id, "wa.correction_requested", { jid: user.wa_chat_id });
+      await sendText(
+        user.wa_chat_id!,
+        "Mandame de nuevo la comida con las cantidades correctas y piso la anterior, o decime qué querés cambiar.",
+        { userId: user.id, category: "correction_hint" },
+      );
       return;
 
     case "unknown":
