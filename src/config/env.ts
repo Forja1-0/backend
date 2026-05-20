@@ -12,6 +12,7 @@ const schema = z.object({
   CORS_ORIGINS: z.string().default(""),
   LANDING_URL: z.string().url().optional(),
   ONBOARDING_URL: z.string().url().optional(),
+  WEB_PROFILE_URL: z.string().url().default("http://localhost:5173"),
   TZ: z.string().default("America/Argentina/Buenos_Aires"),
   UPLOAD_DIR: z.string().default("./data/uploads"),
   MAX_FILE_SIZE: z.coerce.number().default(10485760),

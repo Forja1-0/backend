@@ -4,6 +4,7 @@ import * as repo from "../repositories/profile.repo.js";
 import { planFileUpload } from "../middleware/upload.js";
 import { BadRequest, NotFound } from "../utils/errors.js";
 import { logger } from "../config/logger.js";
+import { requireAuth, enforcePathUserMatchesSession } from "../middleware/require-auth.js";
 
 /**
  * API del perfil web (centro de control del atleta). Lecturas agregadas +
@@ -11,8 +12,16 @@ import { logger } from "../config/logger.js";
  * corporales, lesiones activas). Todo mapeado al schema canónico — sin
  * tablas nuevas. Lo que la Fase Toyota no modela (suscripción, recordatorios,
  * tono del bot, privacidad) no se expone acá por coherencia con la DB.
+ *
+ * Auth: TODAS las rutas requieren `Authorization: Bearer <session_token>`
+ * y el `:userId` del path debe coincidir con el de la sesion (anti-IDOR).
+ * Si un atacante consigue una sesion valida, solo puede tocar su propio
+ * perfil — nunca el de otro UUID.
  */
 export const profileRoutes = Router();
+
+profileRoutes.use(requireAuth);
+profileRoutes.use("/:userId", enforcePathUserMatchesSession);
 
 const uuid = z.string().uuid();
 

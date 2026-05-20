@@ -498,12 +498,16 @@ export function profile(u: {
   age: number | null;
   weight_kg: number | null;
   height_cm: number | null;
-}): string {
+}, link: string): string {
+  const n = firstName(u.name);
   return (
-    `*Tu perfil:*\n` +
+    `*Tu perfil${n ? ", " + n : ""}:*\n` +
     `• Nombre: ${u.name ?? "—"}\n` +
     `• Edad: ${u.age ?? "—"}\n` +
     `• Peso: ${u.weight_kg ? u.weight_kg + " kg" : "—"}\n` +
-    `• Altura: ${u.height_cm ? u.height_cm + " cm" : "—"}`
+    `• Altura: ${u.height_cm ? u.height_cm + " cm" : "—"}\n\n` +
+    `🔗 *Centro de control* — tocá acá para abrir tu perfil completo:\n` +
+    `${link}\n\n` +
+    `_El link vale por 15 minutos. Si se vence, escribime *perfil* de nuevo y te genero uno nuevo._`
   );
 }
