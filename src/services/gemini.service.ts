@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import type { DailySummaryRow } from "../repositories/daily.repo.js";
@@ -17,14 +17,50 @@ const flashWarm = genAI.getGenerativeModel({
   generationConfig: { temperature: 0.9, maxOutputTokens: 600 },
 });
 
-// Adaptador NLU: temperature 0 para determinismo, JSON forzado, budget chico
-// porque corre en cada mensaje de baja confianza del classifier.
+// Adaptador NLU: temperature 0 para determinismo, JSON forzado via schema
+// (el SDK valida la estructura), corre en CADA mensaje del bot — el
+// classifier local quedo de rescate cuando la AI falla o devuelve unknown.
+//
+// El responseSchema replica aiNluResponseSchema (Zod) en formato JSON-Schema
+// del SDK. Si cambia el Zod, hay que cambiar este tambien.
+const NLU_INTENTS = [
+  "command_help", "command_baja", "command_perfil",
+  "greeting", "gratitude", "affirmation", "negation", "correction",
+  "numeric",
+  "training_complete", "training_skip", "training_query",
+  "meal_log", "nutrition_query", "progress_query",
+  "disruption_injury", "disruption_illness", "disruption_desliz",
+  "unknown",
+];
+
 const flashNlu = genAI.getGenerativeModel({
   model: "gemini-2.5-flash",
   generationConfig: {
     temperature: 0,
     maxOutputTokens: 256,
     responseMimeType: "application/json",
+    responseSchema: {
+      type: SchemaType.OBJECT,
+      properties: {
+        intent: { type: SchemaType.STRING, enum: NLU_INTENTS },
+        standardized_text: { type: SchemaType.STRING },
+        entities: {
+          type: SchemaType.OBJECT,
+          properties: {
+            activity: { type: SchemaType.STRING, nullable: true },
+            value: { type: SchemaType.NUMBER, nullable: true },
+            raw_food_input: { type: SchemaType.STRING, nullable: true },
+            macro_target: {
+              type: SchemaType.STRING,
+              nullable: true,
+              enum: ["kcal", "protein", "carbs", "fat"],
+            },
+            description: { type: SchemaType.STRING, nullable: true },
+          },
+        },
+      },
+      required: ["intent", "standardized_text", "entities"],
+    },
   },
 });
 
@@ -202,8 +238,9 @@ export async function parseUserMessage(
   recordAiNluUse(userId);
 
   const started = Date.now();
+  let raw = "";
   try {
-    const raw = await Promise.race([
+    raw = await Promise.race([
       flashNlu.generateContent(nluPrompt(text)).then((r) => r.response.text()),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("nlu_timeout")), NLU_TIMEOUT_MS),
@@ -224,7 +261,7 @@ export async function parseUserMessage(
       logger.warn("nlu response failed zod validation", {
         userId,
         issues: parsed.error.issues.slice(0, 3),
-        sample: raw.slice(0, 200),
+        sample: raw.slice(0, 300),
       });
       return null;
     }
@@ -241,6 +278,8 @@ export async function parseUserMessage(
       userId,
       latency_ms: Date.now() - started,
       reason: msg,
+      raw_sample: raw ? raw.slice(0, 300) : null,
+      input: text.slice(0, 120),
     });
     return null;
   }

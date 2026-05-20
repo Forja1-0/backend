@@ -16,7 +16,10 @@
 import { logger } from "../config/logger.js";
 
 const DAILY_LIMIT = 5;
-const NLU_DAILY_LIMIT = 30;
+// NLU corre en cada mensaje del bot. 200/dia es un techo de seguridad
+// (un user activo manda 30-80 msgs/dia); si lo agotamos cae al classifier
+// local, no se rompe nada.
+const NLU_DAILY_LIMIT = 200;
 const counters = new Map<string, { count: number; date: string }>();
 const nluCounters = new Map<string, { count: number; date: string }>();
 

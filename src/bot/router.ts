@@ -20,17 +20,20 @@ import { handleGreeting, handleGratitude, handleUnknown, handleNonText } from ".
 /**
  * Dispatcher principal del bot.
  *
- * Orden de decision:
- *   1. SESION ACTIVA — el router despacha directo al handler de esa sesion.
- *      Esto cubre flujos multi-paso (RPE, checkin, confirmacion de comida).
- *   2. CLASSIFY — clasificador sync (regex + keywords + fuzzy).
- *      Si confidence >= 0.7 → dispatch directo. Sin AI.
- *   3. NLU ADAPTER (Gemini) — solo si confidence local < 0.7. Devuelve
- *      intent canonico + standardized_text + entities. Si resuelve con
- *      intent != unknown, se despacha con ESE intent (no el local).
- *   4. TRAINING MATCHER — si el NLU no resolvio, intentamos cazar
- *      ejercicios del plan del user contra el texto normalizado local.
- *   5. MEAL FALLBACK — el caso mas frecuente que pasa por aca.
+ * Orden de decision (NLU-first):
+ *   1. SESION ACTIVA — flujo multi-paso (RPE, checkin, confirmacion).
+ *      No tocamos AI, la sesion ya sabe que espera.
+ *   2. SLASH COMMANDS exactos — bypass por velocidad (/ayuda, /perfil, /baja).
+ *   3. NLU ADAPTER (Gemini) — corre en CADA mensaje. Devuelve intent
+ *      canonico + standardized_text + entities. Si NLU resuelve con
+ *      intent != unknown, dispatch directo.
+ *   4. CLASSIFIER LOCAL (rescate) — solo si NLU fallo (timeout, error,
+ *      budget agotado) o devolvio unknown. Aca corre el pipeline legacy
+ *      (classify + training matcher + meal fallback).
+ *
+ * Por que NLU primero: el classifier local tiene falsos positivos confiados
+ * (ej: "unos" matchea fuzzy con "puntos" → progress_query con 0.85), que
+ * mandan comidas al handler equivocado y desvirtuan el score del user.
  */
 export async function routeMessage(user: User, rawText: string | null): Promise<void> {
   const jid = user.wa_chat_id!;
@@ -49,41 +52,35 @@ export async function routeMessage(user: User, rawText: string | null): Promise<
       flow: session.flow,
     });
     if (await dispatchSession(user, rawText, session)) return;
-    // Si el handler de sesion no consumio el mensaje, caemos al classifier.
+    // Si el handler de sesion no consumio el mensaje, caemos al pipeline normal.
   }
 
-  // ── 2. CLASSIFY ──────────────────────────────────────────
-  const c = classify(rawText);
-  logger.debug("classified", { jid, intent: c.intent, confidence: c.confidence, normalized: c.normalized });
-  logBotEvent(user.id, EventTypes.WA_INTENT_CLASSIFIED, {
-    jid,
-    intent: c.intent,
-    confidence: c.confidence,
-    token_count: c.tokens.length,
-    has_active_session: session != null,
-  });
-
-  // Confianza alta: dispatch directo.
-  if (c.confidence >= 0.7) {
+  // ── 2. SLASH COMMANDS exactos — bypass AI ────────────────
+  // Cubre los comandos donde la intencion es 100% inequivoca y no vale
+  // la pena gastar tokens ni latencia.
+  if (SLASH_COMMAND.test(rawText.trim())) {
+    const c = classify(rawText);
+    logBotEvent(user.id, EventTypes.WA_INTENT_CLASSIFIED, {
+      jid,
+      intent: c.intent,
+      confidence: c.confidence,
+      via: "slash_bypass",
+    });
     await dispatchByIntent(user, rawText, c.normalized, c.intent);
     return;
   }
 
-  // ── 3. NLU ADAPTER (AI) — solo cuando el classifier local quedo dudoso.
-  //      Si Gemini resuelve con intent != unknown, lo usamos. Si devuelve
-  //      null o unknown, caemos al pipeline legacy (training matcher + meal).
+  // ── 3. NLU ADAPTER (AI) — entra TODO el trafico restante ───
   const nlu = await parseUserMessage(rawText, user.id);
   if (nlu && nlu.intent !== "unknown") {
     logBotEvent(user.id, "wa.nlu_classified", {
       jid,
       nlu_intent: nlu.intent,
-      local_intent: c.intent,
-      local_confidence: c.confidence,
       has_entities: Object.values(nlu.entities ?? {}).some((v) => v != null),
     });
     // Para meal_log: si el NLU extrajo raw_food_input limpio, lo usamos como
-    // input al meal-parser. Reemplaza el normalize() local porque el NLU
-    // ya corrigio typos/abreviaciones que el normalize regex no toca.
+    // input al meal-parser (corrige typos/abreviaciones que el normalize
+    // regex no toca).
     const dispatchNormalized =
       nlu.intent === "meal_log" && nlu.entities?.raw_food_input
         ? normalize(nlu.entities.raw_food_input)
@@ -98,9 +95,27 @@ export async function routeMessage(user: User, rawText: string | null): Promise<
     return;
   }
 
-  // ── 4. MATCHER DE TRAINING — busca en el plan del user si hay
-  //      "hice/termine X" donde X es un ejercicio/sesion del plan
-  //      que el classifier no conoce ("hice pecfly"). ─────────────────
+  // ── 4. RESCATE: classifier local ─────────────────────────
+  // La AI fallo (timeout / red / budget) o devolvio unknown. Probamos con
+  // las reglas locales — peor que adivinar es no responder.
+  const c = classify(rawText);
+  logger.debug("classified (nlu fallback)", { jid, intent: c.intent, confidence: c.confidence, normalized: c.normalized });
+  logBotEvent(user.id, EventTypes.WA_INTENT_CLASSIFIED, {
+    jid,
+    intent: c.intent,
+    confidence: c.confidence,
+    token_count: c.tokens.length,
+    via: "nlu_fallback",
+    nlu_returned: nlu?.intent ?? null,
+  });
+
+  if (c.confidence >= 0.7) {
+    await dispatchByIntent(user, rawText, c.normalized, c.intent);
+    return;
+  }
+
+  // ── 5. TRAINING MATCHER — busca en el plan del user si hay
+  //      "hice/termine X" donde X es un ejercicio del plan. ──
   if (HAS_COMPLETION_VERB.test(c.normalized)) {
     const todayDow = todayDowFor(user.timezone);
     const match = await matchTraining(user.id, c.normalized, todayDow);
@@ -111,16 +126,17 @@ export async function routeMessage(user: User, rawText: string | null): Promise<
     }
   }
 
-  // ── 5. CONFIANZA MEDIA — intentamos meal (caso mas frecuente
-  //                         que pasa por AI fallback) ──────────────────
+  // ── 6. MEAL FALLBACK ──────────────────────────────────────
   if (c.intent === "meal_log" || (c.intent === "unknown" && c.tokens.length >= 3)) {
     const handled = await handleMealLog(user, rawText, c.normalized);
     if (handled) return;
   }
 
-  // ── 6. FALLBACK ──────────────────────────────────────────
+  // ── 7. FALLBACK FINAL ────────────────────────────────────
   await handleUnknown(user);
 }
+
+const SLASH_COMMAND = /^\/(ayuda|help|menu|perfil|baja|info|datos|start|empezar)$/i;
 
 const HAS_COMPLETION_VERB = /\b(hice|hicimos|termine|terminamos|complete|completamos|cumpli|finalice|acabe|listo)\b/;
 
