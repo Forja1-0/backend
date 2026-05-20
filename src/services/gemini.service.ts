@@ -2,6 +2,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import type { DailySummaryRow } from "../repositories/daily.repo.js";
+import { aiNluResponseSchema, type AiNluResponse } from "../schemas/bot.schema.js";
+import { canUseAiNlu, recordAiNluUse } from "./ai-budget.service.js";
 
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 
@@ -13,6 +15,17 @@ const flash = genAI.getGenerativeModel({
 const flashWarm = genAI.getGenerativeModel({
   model: "gemini-2.5-flash",
   generationConfig: { temperature: 0.9, maxOutputTokens: 600 },
+});
+
+// Adaptador NLU: temperature 0 para determinismo, JSON forzado, budget chico
+// porque corre en cada mensaje de baja confianza del classifier.
+const flashNlu = genAI.getGenerativeModel({
+  model: "gemini-2.5-flash",
+  generationConfig: {
+    temperature: 0,
+    maxOutputTokens: 256,
+    responseMimeType: "application/json",
+  },
 });
 
 export async function generateText(prompt: string): Promise<string> {
@@ -97,6 +110,139 @@ export async function pingGemini(): Promise<boolean> {
       statusText: (err as any)?.statusText,
     });
     return false;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// NLU ADAPTER — traductor "mensaje sucio del user" → intent + entities
+//
+// Corre cuando el classifier local quedo con confidence < 0.7. Su unico
+// trabajo es estructurar el texto en un JSON predecible que el router
+// pueda despachar igual que si lo hubiera resuelto el classifier local.
+// NUNCA inventa entidades ni intents fuera del catalogo.
+// ════════════════════════════════════════════════════════════
+
+const NLU_TIMEOUT_MS = 8000;
+const NLU_MAX_INPUT_CHARS = 500;
+
+function nluPrompt(rawText: string): string {
+  return `Sos el motor de NLU de Forja, un asistente argentino para atletas por WhatsApp. Recibis el mensaje del atleta (con typos, abreviaciones, modismos rioplatenses, sin puntuacion) y lo traducis a un JSON estructurado para que el backend lo procese de forma determinista.
+
+INTENTS PERMITIDOS (elegi UNO):
+- command_help: pide ayuda / menu / "que podes hacer"
+- command_baja: pide darse de baja / cancelar cuenta
+- command_perfil: pide ver su perfil / sus datos
+- greeting: saluda ("hola", "buenas", "que onda")
+- gratitude: agradece ("gracias", "grcs")
+- affirmation: confirma ("si", "dale", "joya", "perfecto")
+- negation: niega ("no", "negativo")
+- correction: pide corregir algo previo ("esta mal", "cambialo", "borra")
+- numeric: respuesta numerica suelta (RPE, sueño, dolor de 0 a 10)
+- training_complete: dice que termino un entrenamiento ("hice piernas", "termine el running")
+- training_skip: dice que NO entrena hoy
+- training_query: pregunta que entrenamiento le toca
+- meal_log: registra una comida ("comi 200g de pollo")
+- nutrition_query: pregunta sobre macros consumidos / faltantes
+- progress_query: pregunta como va su semana / score
+- disruption_injury: reporta una lesion
+- disruption_illness: reporta enfermedad
+- disruption_desliz: reporta atracon / desliz alimentario
+- unknown: no se entiende o no encaja en lo anterior
+
+REGLAS:
+1. standardized_text: el mensaje normalizado en español argentino estandar, sin emojis, sin abreviaciones de WhatsApp, sin typos. Corto y canonico.
+2. entities.activity: SOLO si intent=training_complete, extrae el nombre del entrenamiento (ej "piernas", "pecho", "running"). Si no lo dice, null.
+3. entities.value: SOLO si intent=numeric, el numero entero detectado. Si no, null.
+4. entities.raw_food_input: SOLO si intent=meal_log, la version limpia del texto de comida (cantidades + alimentos), sin verbos ni saludos. Si no, null.
+5. entities.macro_target: SOLO si intent=nutrition_query y se identifica un macro, uno de: "kcal", "protein", "carbs", "fat". Si pregunta general, null.
+6. entities.description: SOLO si intent es disruption_*, resumen corto de la situacion (lesion/enfermedad/desliz). Si no, null.
+7. Si no entendes el mensaje, intent="unknown" y standardized_text es el input original recortado.
+8. NO inventes informacion. NO uses intents que no estan en la lista.
+
+Mensaje del atleta:
+"""
+${rawText}
+"""
+
+Devolve SOLO un objeto JSON con esta forma exacta (sin markdown, sin texto extra):
+{
+  "intent": "<uno de los intents>",
+  "standardized_text": "<texto normalizado>",
+  "entities": {
+    "activity": <string o null>,
+    "value": <number o null>,
+    "raw_food_input": <string o null>,
+    "macro_target": <"kcal"|"protein"|"carbs"|"fat" o null>,
+    "description": <string o null>
+  }
+}`;
+}
+
+/**
+ * Adaptador NLU del bot. Devuelve null si:
+ *   - el user agoto su budget diario de NLU
+ *   - el input es vacio o demasiado largo
+ *   - Gemini timeout (>2s) o error de red
+ *   - la respuesta no parsea / no valida contra el schema
+ *
+ * En cualquiera de esos casos el caller (router) debe caer al classifier
+ * local sin reportar nada al usuario.
+ */
+export async function parseUserMessage(
+  rawText: string,
+  userId: string,
+): Promise<AiNluResponse | null> {
+  const text = rawText.trim();
+  if (!text || text.length > NLU_MAX_INPUT_CHARS) return null;
+  if (!canUseAiNlu(userId)) {
+    logger.debug("nlu budget exhausted, skipping", { userId });
+    return null;
+  }
+
+  recordAiNluUse(userId);
+
+  const started = Date.now();
+  try {
+    const raw = await Promise.race([
+      flashNlu.generateContent(nluPrompt(text)).then((r) => r.response.text()),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("nlu_timeout")), NLU_TIMEOUT_MS),
+      ),
+    ]);
+
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error("no json in nlu response");
+      json = JSON.parse(m[0]);
+    }
+
+    const parsed = aiNluResponseSchema.safeParse(json);
+    if (!parsed.success) {
+      logger.warn("nlu response failed zod validation", {
+        userId,
+        issues: parsed.error.issues.slice(0, 3),
+        sample: raw.slice(0, 200),
+      });
+      return null;
+    }
+
+    logger.debug("nlu ok", {
+      userId,
+      intent: parsed.data.intent,
+      latency_ms: Date.now() - started,
+    });
+    return parsed.data;
+  } catch (err) {
+    const msg = (err as Error)?.message ?? "unknown";
+    logger.warn("nlu failed, falling back to local classifier", {
+      userId,
+      latency_ms: Date.now() - started,
+      reason: msg,
+    });
+    return null;
   }
 }
 
