@@ -34,10 +34,19 @@ const NLU_INTENTS = [
 ];
 
 const flashNlu = genAI.getGenerativeModel({
+  // gemini-2.5-flash con thinking deshabilitado (thinkingBudget: 0). El
+  // thinking por default consume tokens y agrega 5-8s de latencia —
+  // intolerable para un dispatcher que corre en cada mensaje.
+  //
+  // 2.5-flash-lite seria mas barato pero al momento de implementar esto
+  // estaba saturado (503 frecuentes). 2.5-flash es mas estable.
   model: "gemini-2.5-flash",
   generationConfig: {
     temperature: 0,
-    maxOutputTokens: 256,
+    maxOutputTokens: 512,
+    // thinkingConfig no esta en los types del SDK 0.21 pero el endpoint
+    // lo acepta y devuelve respuesta sin thinking. Casteo para pasarlo.
+    ...({ thinkingConfig: { thinkingBudget: 0 } } as object),
     responseMimeType: "application/json",
     responseSchema: {
       type: SchemaType.OBJECT,
@@ -50,11 +59,10 @@ const flashNlu = genAI.getGenerativeModel({
             activity: { type: SchemaType.STRING, nullable: true },
             value: { type: SchemaType.NUMBER, nullable: true },
             raw_food_input: { type: SchemaType.STRING, nullable: true },
-            macro_target: {
-              type: SchemaType.STRING,
-              nullable: true,
-              enum: ["kcal", "protein", "carbs", "fat"],
-            },
+            // No usamos enum en macro_target porque combinarlo con nullable
+            // a veces hace que Gemini ignore el responseSchema entero y
+            // devuelva texto libre. El Zod en el caller valida los valores.
+            macro_target: { type: SchemaType.STRING, nullable: true },
             description: { type: SchemaType.STRING, nullable: true },
           },
         },
@@ -132,12 +140,24 @@ REGLAS:
 /**
  * Self-check de Gemini al arrancar el proceso. Loguea OK o el motivo del fallo
  * para detectar key invalida o modelo retirado sin esperar al primer mensaje.
+ *
+ * Tambien hace un warmup del modelo NLU: el primer hit del proceso suele
+ * tardar 6-8s por cold start del HTTP pool, lo que dispara timeouts en el
+ * primer mensaje real del user. Llamarlo aca lo paga el server, no el atleta.
  */
 export async function pingGemini(): Promise<boolean> {
   try {
     const r = await flash.generateContent("Respondé con la palabra OK y nada mas.");
     const text = r.response.text().trim();
     logger.info("gemini ping ok", { sample: text.slice(0, 30) });
+
+    // Warmup del NLU. fire-and-forget: si falla, el primer mensaje del user
+    // paga el cold start; si va bien, queda caliente.
+    void flashNlu
+      .generateContent(nluPrompt("hola"))
+      .then(() => logger.info("gemini nlu warmup ok"))
+      .catch((err) => logger.warn("gemini nlu warmup failed", { err: (err as Error).message }));
+
     return true;
   } catch (err) {
     logger.error("gemini ping failed — la AI no va a funcionar", {
@@ -161,57 +181,53 @@ export async function pingGemini(): Promise<boolean> {
 const NLU_TIMEOUT_MS = 8000;
 const NLU_MAX_INPUT_CHARS = 500;
 
-function nluPrompt(rawText: string): string {
-  return `Sos el motor de NLU de Forja, un asistente argentino para atletas por WhatsApp. Recibis el mensaje del atleta (con typos, abreviaciones, modismos rioplatenses, sin puntuacion) y lo traducis a un JSON estructurado para que el backend lo procese de forma determinista.
-
-INTENTS PERMITIDOS (elegi UNO):
-- command_help: pide ayuda / menu / "que podes hacer"
-- command_baja: pide darse de baja / cancelar cuenta
-- command_perfil: pide ver su perfil / sus datos
-- greeting: saluda ("hola", "buenas", "que onda")
-- gratitude: agradece ("gracias", "grcs")
-- affirmation: confirma ("si", "dale", "joya", "perfecto")
-- negation: niega ("no", "negativo")
-- correction: pide corregir algo previo ("esta mal", "cambialo", "borra")
-- numeric: respuesta numerica suelta (RPE, sueño, dolor de 0 a 10)
-- training_complete: dice que termino un entrenamiento ("hice piernas", "termine el running")
-- training_skip: dice que NO entrena hoy
-- training_query: pregunta que entrenamiento le toca
-- meal_log: registra una comida ("comi 200g de pollo")
-- nutrition_query: pregunta sobre macros consumidos / faltantes
-- progress_query: pregunta como va su semana / score
-- disruption_injury: reporta una lesion
-- disruption_illness: reporta enfermedad
-- disruption_desliz: reporta atracon / desliz alimentario
-- unknown: no se entiende o no encaja en lo anterior
-
-REGLAS:
-1. standardized_text: el mensaje normalizado en español argentino estandar, sin emojis, sin abreviaciones de WhatsApp, sin typos. Corto y canonico.
-2. entities.activity: SOLO si intent=training_complete, extrae el nombre del entrenamiento (ej "piernas", "pecho", "running"). Si no lo dice, null.
-3. entities.value: SOLO si intent=numeric, el numero entero detectado. Si no, null.
-4. entities.raw_food_input: SOLO si intent=meal_log, la version limpia del texto de comida (cantidades + alimentos), sin verbos ni saludos. Si no, null.
-5. entities.macro_target: SOLO si intent=nutrition_query y se identifica un macro, uno de: "kcal", "protein", "carbs", "fat". Si pregunta general, null.
-6. entities.description: SOLO si intent es disruption_*, resumen corto de la situacion (lesion/enfermedad/desliz). Si no, null.
-7. Si no entendes el mensaje, intent="unknown" y standardized_text es el input original recortado.
-8. NO inventes informacion. NO uses intents que no estan en la lista.
-
-Mensaje del atleta:
-"""
-${rawText}
-"""
-
-Devolve SOLO un objeto JSON con esta forma exacta (sin markdown, sin texto extra):
-{
-  "intent": "<uno de los intents>",
-  "standardized_text": "<texto normalizado>",
-  "entities": {
-    "activity": <string o null>,
-    "value": <number o null>,
-    "raw_food_input": <string o null>,
-    "macro_target": <"kcal"|"protein"|"carbs"|"fat" o null>,
-    "description": <string o null>
+/**
+ * Extrae el primer objeto JSON balanceado de un string. Tolera preambles
+ * ("Here is the JSON:") y fences markdown (\`\`\`json ... \`\`\`) que Gemini
+ * mete a veces aunque tenga responseMimeType=application/json.
+ * Devuelve el objeto parseado o null si no hay JSON valido.
+ */
+function extractJsonObject(raw: string): unknown {
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { /* sigue */ }
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\") { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(raw.slice(start, i + 1)); } catch { return null; }
+      }
+    }
   }
-}`;
+  return null;
+}
+
+function nluPrompt(rawText: string): string {
+  // Prompt deliberadamente corto: los intents validos vienen forzados por
+  // responseSchema (enum), no hace falta listarlos en texto. Solo damos
+  // las reglas que no se infieren del schema.
+  return `Clasifica el mensaje de un atleta argentino de WhatsApp (puede tener typos/modismos/abreviaciones) segun el schema.
+
+Reglas:
+- standardized_text: version canonica en español argentino sin typos ni emojis.
+- entities.activity: solo si training_complete (ej "piernas", "pecho", "running"), si no null.
+- entities.value: solo si numeric, si no null.
+- entities.raw_food_input: solo si meal_log, texto limpio de los alimentos con cantidades sin verbos ("200g pollo y un plato arroz"), si no null.
+- entities.macro_target: solo si nutrition_query y se menciona un macro especifico: "kcal"|"protein"|"carbs"|"fat", si no null.
+- entities.description: solo si disruption_*, resumen corto, si no null.
+- Si no entendes nada, intent="unknown".
+
+Mensaje: "${rawText}"`;
 }
 
 /**
@@ -247,14 +263,11 @@ export async function parseUserMessage(
       ),
     ]);
 
-    let json: unknown;
-    try {
-      json = JSON.parse(raw);
-    } catch {
-      const m = raw.match(/\{[\s\S]*\}/);
-      if (!m) throw new Error("no json in nlu response");
-      json = JSON.parse(m[0]);
-    }
+    // Gemini 2.5-flash a veces ignora responseMimeType y antepone basura
+    // tipo "Here is the JSON:\n" o envuelve en ```json ... ```. Extraemos
+    // el primer objeto JSON balanceado del raw.
+    const json = extractJsonObject(raw);
+    if (!json) throw new Error("no json in nlu response");
 
     const parsed = aiNluResponseSchema.safeParse(json);
     if (!parsed.success) {
