@@ -270,12 +270,12 @@ export function mealClarify(foodHint: string): string {
   ]);
 }
 
-/** Limpia nombres SARA2 para mostrar al usuario (quita truncados, paréntesis rotos, etc). */
 function cleanFoodName(name: string): string {
-  return name
+  const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
+  return capitalized
     .replace(/-\s*$/, "")              // trailing hyphen
     .replace(/\s*\([^)]*$/, "")        // open paren never closed
-    .replace(/^[^A-ZÁÉÍÓÚÜ]+/, "")     // leading lowercase fragment
+    .replace(/^[^A-ZÁÉÍÓÚÜÑ]+/, "")    // leading lowercase fragment
     .replace(/\s{2,}/g, " ")           // double spaces
     .trim() || name.trim();
 }

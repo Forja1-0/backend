@@ -2,468 +2,1137 @@
   {
     "slug": "tuco",
     "display_name": "Tuco",
-    "aliases": ["tuco", "salsa tuco", "salsa boloñesa", "salsa bolognesa", "ragu"],
+    "aliases": [
+      "tuco",
+      "salsa tuco",
+      "salsa boloñesa",
+      "salsa bolognesa",
+      "ragu"
+    ],
     "default_portion_g": 215,
     "source_url": "https://www.paulinacocina.net/tuco/39110",
     "components": [
-      { "food_query": "carne picada", "grams_per_portion": 85 },
-      { "food_query": "cebolla", "grams_per_portion": 30 },
-      { "food_query": "tomate triturado", "grams_per_portion": 70 },
-      { "food_query": "morron rojo", "grams_per_portion": 10 },
-      { "food_query": "zanahoria", "grams_per_portion": 15 },
-      { "food_query": "ajo", "grams_per_portion": 2 },
-      { "food_query": "aceite", "grams_per_portion": 5 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 85
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "tomate triturado",
+        "grams_per_portion": 70
+      },
+      {
+        "food_query": "morron rojo",
+        "grams_per_portion": 10
+      },
+      {
+        "food_query": "zanahoria",
+        "grams_per_portion": 15
+      },
+      {
+        "food_query": "ajo",
+        "grams_per_portion": 2
+      },
+      {
+        "food_query": "aceite",
+        "grams_per_portion": 5
+      }
     ]
   },
   {
     "slug": "milanesa_napolitana",
     "display_name": "Milanesa napolitana",
-    "aliases": ["milanesa napolitana", "napolitana", "mila napo", "milanesa a la napolitana"],
+    "aliases": [
+      "milanesa napolitana",
+      "napolitana",
+      "mila napo",
+      "milanesa a la napolitana"
+    ],
     "default_portion_g": 360,
     "source_url": "https://www.recetasnestle.com.ar/recetas/milanesas-a-la-napolitana",
     "components": [
-      { "food_query": "carne nalga", "grams_per_portion": 150, "state": "crudo" },
-      { "food_query": "queso mozzarella", "grams_per_portion": 60 },
-      { "food_query": "salsa de tomate", "grams_per_portion": 30 },
-      { "food_query": "jamon cocido", "grams_per_portion": 20 },
-      { "food_query": "pan rallado", "grams_per_portion": 50 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 25 },
-      { "food_query": "harina de trigo", "grams_per_portion": 25 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 150,
+        "state": "crudo"
+      },
+      {
+        "food_query": "queso mozzarella",
+        "grams_per_portion": 60
+      },
+      {
+        "food_query": "salsa de tomate",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "jamon cocido",
+        "grams_per_portion": 20
+      },
+      {
+        "food_query": "pan rallado",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "harina de trigo",
+        "grams_per_portion": 25
+      }
     ]
   },
   {
     "slug": "locro",
     "display_name": "Locro",
-    "aliases": ["locro", "locro criollo"],
+    "aliases": [
+      "locro",
+      "locro criollo"
+    ],
     "default_portion_g": 325,
     "source_url": "https://www.paulinacocina.net/receta-de-locro-argentino/9829",
     "components": [
-      { "food_query": "maiz blanco", "grams_per_portion": 50, "state": "crudo" },
-      { "food_query": "porotos", "grams_per_portion": 25, "state": "crudo" },
-      { "food_query": "zapallo", "grams_per_portion": 100 },
-      { "food_query": "panceta", "grams_per_portion": 25 },
-      { "food_query": "chorizo colorado", "grams_per_portion": 20 },
-      { "food_query": "falda de vaca", "grams_per_portion": 40 },
-      { "food_query": "mondongo", "grams_per_portion": 35 },
-      { "food_query": "cebolla", "grams_per_portion": 30 }
+      {
+        "food_query": "maiz blanco",
+        "grams_per_portion": 50,
+        "state": "crudo"
+      },
+      {
+        "food_query": "porotos",
+        "grams_per_portion": 25,
+        "state": "crudo"
+      },
+      {
+        "food_query": "zapallo",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "panceta",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "chorizo colorado",
+        "grams_per_portion": 20
+      },
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 40
+      },
+      {
+        "food_query": "mondongo",
+        "grams_per_portion": 35
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 30
+      }
     ]
   },
   {
     "slug": "empanada_carne",
     "display_name": "Empanada de carne",
-    "aliases": ["empanada", "empanadas", "empanada de carne", "empanadas de carne"],
+    "aliases": [
+      "empanada",
+      "empanadas",
+      "empanada de carne",
+      "empanadas de carne"
+    ],
     "default_portion_g": 80,
     "source_url": "https://eurocampa.com/receta-empanadas-jugosas-carne-argentina/",
     "components": [
-      { "food_query": "masa de empanada", "grams_per_portion": 50 },
-      { "food_query": "carne picada", "grams_per_portion": 20 },
-      { "food_query": "cebolla", "grams_per_portion": 5 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 2 },
-      { "food_query": "aceitunas verdes", "grams_per_portion": 1 }
+      {
+        "food_query": "masa de empanada",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 20
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 5
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 2
+      },
+      {
+        "food_query": "aceitunas verdes",
+        "grams_per_portion": 1
+      }
     ]
   },
   {
     "slug": "guiso_lentejas",
     "display_name": "Guiso de lentejas",
-    "aliases": ["guiso de lentejas", "lentejas guisadas", "lentejas con chorizo"],
+    "aliases": [
+      "guiso de lentejas",
+      "lentejas guisadas",
+      "lentejas con chorizo"
+    ],
     "default_portion_g": 360,
     "source_url": "https://www.paulinacocina.net/guiso-lentejas-receta-infalible/10685",
     "components": [
-      { "food_query": "lentejas", "grams_per_portion": 65, "state": "crudo" },
-      { "food_query": "carne de res", "grams_per_portion": 100 },
-      { "food_query": "panceta", "grams_per_portion": 40 },
-      { "food_query": "chorizo colorado", "grams_per_portion": 25 },
-      { "food_query": "papa", "grams_per_portion": 50 },
-      { "food_query": "cebolla", "grams_per_portion": 30 },
-      { "food_query": "zanahoria", "grams_per_portion": 30 },
-      { "food_query": "morron rojo", "grams_per_portion": 20 }
+      {
+        "food_query": "lentejas",
+        "grams_per_portion": 65,
+        "state": "crudo"
+      },
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "panceta",
+        "grams_per_portion": 40
+      },
+      {
+        "food_query": "chorizo colorado",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "papa",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "zanahoria",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "morron rojo",
+        "grams_per_portion": 20
+      }
     ]
   },
   {
     "slug": "pastel_papa",
     "display_name": "Pastel de papa",
-    "aliases": ["pastel de papa", "pastel de papas", "shepherd pie"],
+    "aliases": [
+      "pastel de papa",
+      "pastel de papas",
+      "shepherd pie"
+    ],
     "default_portion_g": 415,
     "source_url": "http://cocinerosargentinos.com/carne/pastel-de-papas",
     "components": [
-      { "food_query": "pure de papa", "grams_per_portion": 165 },
-      { "food_query": "carne picada", "grams_per_portion": 125 },
-      { "food_query": "cebolla", "grams_per_portion": 85 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 10 },
-      { "food_query": "queso rallado", "grams_per_portion": 15 },
-      { "food_query": "manteca", "grams_per_portion": 15 }
+      {
+        "food_query": "pure de papa",
+        "grams_per_portion": 165
+      },
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 125
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 85
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 10
+      },
+      {
+        "food_query": "queso rallado",
+        "grams_per_portion": 15
+      },
+      {
+        "food_query": "manteca",
+        "grams_per_portion": 15
+      }
     ]
   },
   {
     "slug": "pizza_muzzarella",
     "display_name": "Pizza muzzarella (porción)",
-    "aliases": ["pizza", "pizza muzza", "pizza muzzarella", "pizza mozzarella", "porcion de pizza"],
+    "aliases": [
+      "pizza",
+      "pizza muzza",
+      "pizza muzzarella",
+      "pizza mozzarella",
+      "porcion de pizza"
+    ],
     "default_portion_g": 140,
     "source_url": "https://saborargento.com.ar/pizzas/pizza-muzzarella/",
     "components": [
-      { "food_query": "masa de pizza", "grams_per_portion": 50 },
-      { "food_query": "queso mozzarella", "grams_per_portion": 37 },
-      { "food_query": "salsa de tomate", "grams_per_portion": 50 },
-      { "food_query": "aceite de oliva", "grams_per_portion": 3 }
+      {
+        "food_query": "masa de pizza",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "queso mozzarella",
+        "grams_per_portion": 37
+      },
+      {
+        "food_query": "salsa de tomate",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "aceite de oliva",
+        "grams_per_portion": 3
+      }
     ]
   },
   {
     "slug": "noquis_salsa",
     "display_name": "Ñoquis con salsa filetto",
-    "aliases": ["ñoquis", "noquis", "gnocchi", "ñoquis con salsa", "noquis con salsa", "ñoquis con tuco", "noquis con tuco"],
+    "aliases": [
+      "ñoquis",
+      "noquis",
+      "gnocchi",
+      "ñoquis con salsa",
+      "noquis con salsa",
+      "ñoquis con tuco",
+      "noquis con tuco"
+    ],
     "default_portion_g": 320,
     "source_url": "https://alimentoscanale.com.ar/noquis-con-salsa-filetto/",
     "components": [
-      { "food_query": "ñoquis de papa", "grams_per_portion": 250, "state": "crudo" },
-      { "food_query": "salsa de tomate", "grams_per_portion": 65 },
-      { "food_query": "aceite de oliva", "grams_per_portion": 5 }
+      {
+        "food_query": "ñoquis de papa",
+        "grams_per_portion": 250,
+        "state": "crudo"
+      },
+      {
+        "food_query": "salsa de tomate",
+        "grams_per_portion": 65
+      },
+      {
+        "food_query": "aceite de oliva",
+        "grams_per_portion": 5
+      }
     ]
   },
   {
     "slug": "tarta_jamon_queso",
     "display_name": "Tarta de jamón y queso",
-    "aliases": ["tarta jamon y queso", "tarta de jamon", "tarta jamon queso"],
+    "aliases": [
+      "tarta jamon y queso",
+      "tarta de jamon",
+      "tarta jamon queso"
+    ],
     "default_portion_g": 200,
     "source_url": "https://www.paulinacocina.net/tarta-de-jamon-queso-4-pasos/13573",
     "components": [
-      { "food_query": "masa de tarta", "grams_per_portion": 80 },
-      { "food_query": "jamon cocido", "grams_per_portion": 50 },
-      { "food_query": "queso", "grams_per_portion": 40 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 17 },
-      { "food_query": "crema de leche", "grams_per_portion": 12 }
+      {
+        "food_query": "masa de tarta",
+        "grams_per_portion": 80
+      },
+      {
+        "food_query": "jamon cocido",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "queso",
+        "grams_per_portion": 40
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 17
+      },
+      {
+        "food_query": "crema de leche",
+        "grams_per_portion": 12
+      }
     ]
   },
   {
     "slug": "asado_vacio",
     "display_name": "Asado (vacío)",
-    "aliases": ["asado", "vacio a la parrilla", "asado de vacio", "asado argentino"],
+    "aliases": [
+      "asado",
+      "vacio a la parrilla",
+      "asado de vacio",
+      "asado argentino"
+    ],
     "default_portion_g": 400,
     "source_url": "https://hacerasado.com.ar/como-hacer-vacio-a-la-parrilla/",
     "components": [
-      { "food_query": "vacio de vaca", "grams_per_portion": 400, "state": "crudo" }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 400,
+        "state": "crudo"
+      }
     ]
   },
   {
     "slug": "lasagna",
     "display_name": "Lasagna",
-    "aliases": ["lasagna", "lasaña", "lasagne"],
+    "aliases": [
+      "lasagna",
+      "lasaña",
+      "lasagne"
+    ],
     "default_portion_g": 425,
     "source_url": "https://comesinpasta.es/cuantos-gramos-tiene-una-racion-de-lasana/",
     "components": [
-      { "food_query": "masa para lasagna", "grams_per_portion": 100, "state": "crudo" },
-      { "food_query": "carne picada", "grams_per_portion": 75 },
-      { "food_query": "queso mozzarella", "grams_per_portion": 60 },
-      { "food_query": "salsa blanca", "grams_per_portion": 100 },
-      { "food_query": "salsa de tomate", "grams_per_portion": 60 },
-      { "food_query": "queso parmesano", "grams_per_portion": 30 }
+      {
+        "food_query": "masa para lasagna",
+        "grams_per_portion": 100,
+        "state": "crudo"
+      },
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 75
+      },
+      {
+        "food_query": "queso mozzarella",
+        "grams_per_portion": 60
+      },
+      {
+        "food_query": "salsa blanca",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "salsa de tomate",
+        "grams_per_portion": 60
+      },
+      {
+        "food_query": "queso parmesano",
+        "grams_per_portion": 30
+      }
     ]
   },
   {
     "slug": "canelones_carne",
     "display_name": "Canelones de carne",
-    "aliases": ["canelones", "canelones de carne"],
+    "aliases": [
+      "canelones",
+      "canelones de carne"
+    ],
     "default_portion_g": 310,
     "source_url": "https://www.recetasnestle.cl/recetas/canelones",
     "components": [
-      { "food_query": "masa para canelones", "grams_per_portion": 60, "state": "crudo" },
-      { "food_query": "carne picada", "grams_per_portion": 62 },
-      { "food_query": "queso mozzarella", "grams_per_portion": 25 },
-      { "food_query": "salsa blanca", "grams_per_portion": 125 },
-      { "food_query": "salsa de tomate", "grams_per_portion": 30 },
-      { "food_query": "cebolla", "grams_per_portion": 10 }
+      {
+        "food_query": "Pastas secas",
+        "grams_per_portion": 60,
+        "state": "crudo"
+      },
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 62
+      },
+      {
+        "food_query": "queso mozzarella",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "salsa blanca",
+        "grams_per_portion": 125
+      },
+      {
+        "food_query": "salsa de tomate",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 10
+      }
     ]
   },
   {
     "slug": "ravioles_salsa",
     "display_name": "Ravioles con salsa de tomate",
-    "aliases": ["ravioles", "raviolis", "ravioles con salsa", "ravioles con tuco"],
+    "aliases": [
+      "ravioles",
+      "raviolis",
+      "ravioles con salsa",
+      "ravioles con tuco"
+    ],
     "default_portion_g": 295,
     "source_url": "https://elintransigente.com/2026/03/ravioles-caseros-la-receta-de-donato-de-santis-para-que-queden-perfectos/",
     "components": [
-      { "food_query": "ravioles", "grams_per_portion": 225 },
-      { "food_query": "salsa de tomate", "grams_per_portion": 60 },
-      { "food_query": "queso rallado", "grams_per_portion": 10 }
+      {
+        "food_query": "ravioles",
+        "grams_per_portion": 225
+      },
+      {
+        "food_query": "salsa de tomate",
+        "grams_per_portion": 60
+      },
+      {
+        "food_query": "queso rallado",
+        "grams_per_portion": 10
+      }
     ]
   },
   {
     "slug": "choripan",
     "display_name": "Choripán",
-    "aliases": ["choripan", "chori", "chori pan", "chorizo al pan"],
+    "aliases": [
+      "choripan",
+      "chori",
+      "chori pan",
+      "chorizo al pan"
+    ],
     "default_portion_g": 220,
     "source_url": "https://www.paulinacocina.net/choripan-argentino/30739",
     "components": [
-      { "food_query": "pan frances", "grams_per_portion": 85 },
-      { "food_query": "chorizo de cerdo", "grams_per_portion": 120 },
-      { "food_query": "chimichurri", "grams_per_portion": 15 }
+      {
+        "food_query": "pan frances",
+        "grams_per_portion": 85
+      },
+      {
+        "food_query": "chorizo de cerdo",
+        "grams_per_portion": 120
+      },
+      {
+        "food_query": "chimichurri",
+        "grams_per_portion": 15
+      }
     ]
   },
   {
     "slug": "matambre_pizza",
     "display_name": "Matambre a la pizza",
-    "aliases": ["matambre a la pizza", "matambre pizza"],
+    "aliases": [
+      "matambre a la pizza",
+      "matambre pizza"
+    ],
     "default_portion_g": 470,
     "source_url": "https://www.bonviveur.es/recetas/matambre-a-la-pizza",
     "components": [
-      { "food_query": "matambre", "grams_per_portion": 250, "state": "crudo" },
-      { "food_query": "queso mozzarella", "grams_per_portion": 100 },
-      { "food_query": "salsa de tomate", "grams_per_portion": 80 },
-      { "food_query": "jamon cocido", "grams_per_portion": 25 },
-      { "food_query": "aceitunas negras", "grams_per_portion": 15 }
+      {
+        "food_query": "matambre",
+        "grams_per_portion": 250,
+        "state": "crudo"
+      },
+      {
+        "food_query": "queso mozzarella",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "salsa de tomate",
+        "grams_per_portion": 80
+      },
+      {
+        "food_query": "jamon cocido",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "aceitunas negras",
+        "grams_per_portion": 15
+      }
     ]
   },
   {
     "slug": "revuelto_gramajo",
     "display_name": "Revuelto gramajo",
-    "aliases": ["revuelto gramajo", "gramajo", "revuelto de gramajo"],
+    "aliases": [
+      "revuelto gramajo",
+      "gramajo",
+      "revuelto de gramajo"
+    ],
     "default_portion_g": 362,
     "source_url": "https://www.paulinacocina.net/revuelto-gramajo/26511",
     "components": [
-      { "food_query": "papas fritas", "grams_per_portion": 135 },
-      { "food_query": "jamon cocido", "grams_per_portion": 65 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 100 },
-      { "food_query": "cebolla", "grams_per_portion": 35 },
-      { "food_query": "arvejas", "grams_per_portion": 17 },
-      { "food_query": "aceite", "grams_per_portion": 10 }
+      {
+        "food_query": "papas fritas",
+        "grams_per_portion": 135
+      },
+      {
+        "food_query": "jamon cocido",
+        "grams_per_portion": 65
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 35
+      },
+      {
+        "food_query": "arvejas",
+        "grams_per_portion": 17
+      },
+      {
+        "food_query": "aceite",
+        "grams_per_portion": 10
+      }
     ]
   },
   {
     "slug": "hamburguesa_casera",
     "display_name": "Hamburguesa casera",
-    "aliases": ["hamburguesa", "hamburguesa casera", "burger"],
+    "aliases": [
+      "hamburguesa",
+      "hamburguesa casera",
+      "burger"
+    ],
     "default_portion_g": 225,
     "source_url": "https://cocinamuyfacil.com/hamburguesas-caseras-receta/",
     "components": [
-      { "food_query": "carne picada", "grams_per_portion": 115 },
-      { "food_query": "pan de hamburguesa", "grams_per_portion": 60 },
-      { "food_query": "queso", "grams_per_portion": 20 },
-      { "food_query": "lechuga", "grams_per_portion": 10 },
-      { "food_query": "tomate", "grams_per_portion": 20 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 115
+      },
+      {
+        "food_query": "pan de hamburguesa",
+        "grams_per_portion": 60
+      },
+      {
+        "food_query": "queso",
+        "grams_per_portion": 20
+      },
+      {
+        "food_query": "lechuga",
+        "grams_per_portion": 10
+      },
+      {
+        "food_query": "tomate",
+        "grams_per_portion": 20
+      }
     ]
   },
   {
     "slug": "tortilla_papa",
     "display_name": "Tortilla de papa",
-    "aliases": ["tortilla de papa", "tortilla de papas", "tortilla espanola", "tortilla española"],
+    "aliases": [
+      "tortilla de papa",
+      "tortilla de papas",
+      "tortilla espanola",
+      "tortilla española"
+    ],
     "default_portion_g": 335,
     "source_url": "https://www.paulinacocina.net/tortilla-de-papas-espanola/10476",
     "components": [
-      { "food_query": "papa", "grams_per_portion": 200 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 100 },
-      { "food_query": "cebolla", "grams_per_portion": 25 },
-      { "food_query": "aceite de oliva", "grams_per_portion": 10 }
+      {
+        "food_query": "papa",
+        "grams_per_portion": 200
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "aceite de oliva",
+        "grams_per_portion": 10
+      }
     ]
   },
   {
     "slug": "sandwich_milanesa",
     "display_name": "Sándwich de milanesa",
-    "aliases": ["sandwich de milanesa", "sanguche de milanesa", "sandwich mila", "sanguche mila"],
+    "aliases": [
+      "sandwich de milanesa",
+      "sanguche de milanesa",
+      "sandwich mila",
+      "sanguche mila"
+    ],
     "default_portion_g": 277,
     "source_url": "https://bonviveur.com/es/recetas/sandwich-de-milanesa",
     "components": [
-      { "food_query": "pan figazza", "grams_per_portion": 100 },
-      { "food_query": "carne nalga", "grams_per_portion": 120, "state": "crudo" },
-      { "food_query": "lechuga", "grams_per_portion": 12 },
-      { "food_query": "tomate", "grams_per_portion": 30 },
-      { "food_query": "mayonesa", "grams_per_portion": 15 }
+      {
+        "food_query": "pan figazza",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 120,
+        "state": "crudo"
+      },
+      {
+        "food_query": "lechuga",
+        "grams_per_portion": 12
+      },
+      {
+        "food_query": "tomate",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "mayonesa",
+        "grams_per_portion": 15
+      }
     ]
   },
   {
     "slug": "albondigas_pure",
     "display_name": "Albóndigas con puré",
-    "aliases": ["albondigas con pure", "albondigas con puré", "albondigas"],
+    "aliases": [
+      "albondigas con pure",
+      "albondigas con puré",
+      "albondigas"
+    ],
     "default_portion_g": 377,
     "source_url": "https://cocinerosargentinos.com/carne/albondigas-con-pure",
     "components": [
-      { "food_query": "carne picada", "grams_per_portion": 125 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 12 },
-      { "food_query": "pan rallado", "grams_per_portion": 15 },
-      { "food_query": "pure de papa", "grams_per_portion": 200 },
-      { "food_query": "leche entera", "grams_per_portion": 25 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 125
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 12
+      },
+      {
+        "food_query": "pan rallado",
+        "grams_per_portion": 15
+      },
+      {
+        "food_query": "pure de papa",
+        "grams_per_portion": 200
+      },
+      {
+        "food_query": "leche entera",
+        "grams_per_portion": 25
+      }
     ]
   },
   {
     "slug": "pollo_horno_papas",
     "display_name": "Pollo al horno con papas",
-    "aliases": ["pollo al horno", "pollo al horno con papas", "pollo con papas"],
+    "aliases": [
+      "pollo al horno",
+      "pollo al horno con papas",
+      "pollo con papas"
+    ],
     "default_portion_g": 490,
     "source_url": "https://www.lanacion.com.ar/recetas/platos-de-comida-principal/pollo-al-horno-con-papas-nid30062022/",
     "components": [
-      { "food_query": "pollo entero", "grams_per_portion": 250, "state": "crudo" },
-      { "food_query": "papa", "grams_per_portion": 200 },
-      { "food_query": "cebolla", "grams_per_portion": 30 },
-      { "food_query": "aceite", "grams_per_portion": 10 }
+      {
+        "food_query": "pollo entero",
+        "grams_per_portion": 250,
+        "state": "crudo"
+      },
+      {
+        "food_query": "papa",
+        "grams_per_portion": 200
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "aceite",
+        "grams_per_portion": 10
+      }
     ]
   },
   {
     "slug": "arroz_con_pollo",
     "display_name": "Arroz con pollo",
-    "aliases": ["arroz con pollo"],
+    "aliases": [
+      "arroz con pollo"
+    ],
     "default_portion_g": 323,
     "source_url": "https://elcocinerocasero.com/receta/arroz-con-pollo-para-6-personas/",
     "components": [
-      { "food_query": "arroz", "grams_per_portion": 100, "state": "crudo" },
-      { "food_query": "pollo", "grams_per_portion": 150 },
-      { "food_query": "cebolla", "grams_per_portion": 25 },
-      { "food_query": "morron rojo", "grams_per_portion": 15 },
-      { "food_query": "tomate", "grams_per_portion": 25 },
-      { "food_query": "aceite", "grams_per_portion": 8 }
+      {
+        "food_query": "arroz",
+        "grams_per_portion": 100,
+        "state": "crudo"
+      },
+      {
+        "food_query": "pollo",
+        "grams_per_portion": 150
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "morron rojo",
+        "grams_per_portion": 15
+      },
+      {
+        "food_query": "tomate",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "aceite",
+        "grams_per_portion": 8
+      }
     ]
   },
   {
     "slug": "bife_caballo",
     "display_name": "Bife a caballo",
-    "aliases": ["bife a caballo", "bistec a caballo"],
+    "aliases": [
+      "bife a caballo",
+      "bistec a caballo"
+    ],
     "default_portion_g": 412,
     "source_url": "https://www.recetas-argentinas.com/recetas/plato-principal/bifes-a-caballo",
     "components": [
-      { "food_query": "bife de carne", "grams_per_portion": 200, "state": "crudo" },
-      { "food_query": "huevo de gallina", "grams_per_portion": 100 },
-      { "food_query": "cebolla", "grams_per_portion": 50 },
-      { "food_query": "morron rojo", "grams_per_portion": 25 },
-      { "food_query": "queso mozzarella", "grams_per_portion": 37 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 200,
+        "state": "crudo"
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "morron rojo",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "queso mozzarella",
+        "grams_per_portion": 37
+      }
     ]
   },
   {
     "slug": "fideos_bolognesa",
     "display_name": "Fideos a la bolognesa",
-    "aliases": ["fideos a la bolognesa", "fideos bolognesa", "fideos con tuco", "tallarines con tuco", "spaghetti bolognesa", "tallarines a la bolognesa"],
+    "aliases": [
+      "fideos a la bolognesa",
+      "fideos bolognesa",
+      "fideos con tuco",
+      "tallarines con tuco",
+      "spaghetti bolognesa",
+      "tallarines a la bolognesa"
+    ],
     "default_portion_g": 295,
     "source_url": "https://www.casadelatorre.com.ar/recetas/fideos-con-salsa-bolognesa/",
     "components": [
-      { "food_query": "fideos secos", "grams_per_portion": 100, "state": "crudo" },
-      { "food_query": "carne picada", "grams_per_portion": 75 },
-      { "food_query": "tomate triturado", "grams_per_portion": 70 },
-      { "food_query": "cebolla", "grams_per_portion": 25 },
-      { "food_query": "zanahoria", "grams_per_portion": 15 },
-      { "food_query": "queso rallado", "grams_per_portion": 10 }
+      {
+        "food_query": "fideos secos",
+        "grams_per_portion": 100,
+        "state": "crudo"
+      },
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 75
+      },
+      {
+        "food_query": "tomate triturado",
+        "grams_per_portion": 70
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "zanahoria",
+        "grams_per_portion": 15
+      },
+      {
+        "food_query": "queso rallado",
+        "grams_per_portion": 10
+      }
     ]
   },
   {
     "slug": "provoleta",
     "display_name": "Provoleta",
-    "aliases": ["provoleta", "provolone a la parrilla"],
+    "aliases": [
+      "provoleta",
+      "provolone a la parrilla"
+    ],
     "default_portion_g": 100,
     "source_url": "https://bonviveur.com/es/recetas/provoleta",
     "components": [
-      { "food_query": "queso provolone", "grams_per_portion": 100 }
+      {
+        "food_query": "queso provolone",
+        "grams_per_portion": 100
+      }
     ]
   },
   {
     "slug": "pollo_verdeo",
     "display_name": "Pollo al verdeo",
-    "aliases": ["pollo al verdeo", "pollo verdeo"],
+    "aliases": [
+      "pollo al verdeo",
+      "pollo verdeo"
+    ],
     "default_portion_g": 315,
     "source_url": "https://www.paulinacocina.net/pollo-al-verdeo-con-crema/3220",
     "components": [
-      { "food_query": "pollo", "grams_per_portion": 200, "state": "crudo" },
-      { "food_query": "cebolla de verdeo", "grams_per_portion": 40 },
-      { "food_query": "crema de leche", "grams_per_portion": 50 },
-      { "food_query": "vino blanco", "grams_per_portion": 15 },
-      { "food_query": "aceite", "grams_per_portion": 10 }
+      {
+        "food_query": "pollo",
+        "grams_per_portion": 200,
+        "state": "crudo"
+      },
+      {
+        "food_query": "cebolla de verdeo",
+        "grams_per_portion": 40
+      },
+      {
+        "food_query": "crema de leche",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "vino blanco",
+        "grams_per_portion": 15
+      },
+      {
+        "food_query": "aceite",
+        "grams_per_portion": 10
+      }
     ]
   },
   {
     "slug": "milanesa_comun",
     "display_name": "Milanesa (común)",
-    "aliases": ["milanesa", "milanesas", "milanesa comun", "milanesa de carne", "milanesa de nalga"],
+    "aliases": [
+      "milanesa",
+      "milanesas",
+      "milanesa comun",
+      "milanesa de carne",
+      "milanesa de nalga"
+    ],
     "default_portion_g": 142,
     "source_url": "https://cocinerosargentinos.com/carne/las-milanesas-perfectas",
     "components": [
-      { "food_query": "carne nalga", "grams_per_portion": 100, "state": "crudo" },
-      { "food_query": "huevo de gallina", "grams_per_portion": 12 },
-      { "food_query": "pan rallado", "grams_per_portion": 25 },
-      { "food_query": "aceite", "grams_per_portion": 5 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 100,
+        "state": "crudo"
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 12
+      },
+      {
+        "food_query": "pan rallado",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "aceite",
+        "grams_per_portion": 5
+      }
     ]
   },
   {
     "slug": "puchero",
     "display_name": "Puchero",
-    "aliases": ["puchero", "puchero argentino"],
+    "aliases": [
+      "puchero",
+      "puchero argentino"
+    ],
     "default_portion_g": 690,
     "source_url": "https://www.paulinacocina.net/receta-de-puchero-argentino/7111",
     "components": [
-      { "food_query": "falda de vaca", "grams_per_portion": 200 },
-      { "food_query": "papa", "grams_per_portion": 150 },
-      { "food_query": "zapallo", "grams_per_portion": 100 },
-      { "food_query": "batata", "grams_per_portion": 80 },
-      { "food_query": "choclo", "grams_per_portion": 80 },
-      { "food_query": "zanahoria", "grams_per_portion": 50 },
-      { "food_query": "cebolla", "grams_per_portion": 30 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 200
+      },
+      {
+        "food_query": "papa",
+        "grams_per_portion": 150
+      },
+      {
+        "food_query": "zapallo",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "batata",
+        "grams_per_portion": 80
+      },
+      {
+        "food_query": "choclo",
+        "grams_per_portion": 80
+      },
+      {
+        "food_query": "zanahoria",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 30
+      }
     ]
   },
   {
     "slug": "carbonada",
     "display_name": "Carbonada criolla",
-    "aliases": ["carbonada", "carbonada criolla"],
+    "aliases": [
+      "carbonada",
+      "carbonada criolla"
+    ],
     "default_portion_g": 555,
     "source_url": "https://foodit.lanacion.com.ar/recetas/criolla-y-contundente-la-carbonada-de-dolli-irigoyen-nid30042024/",
     "components": [
-      { "food_query": "carne de res", "grams_per_portion": 90 },
-      { "food_query": "papa", "grams_per_portion": 65 },
-      { "food_query": "zapallo", "grams_per_portion": 65 },
-      { "food_query": "batata", "grams_per_portion": 50 },
-      { "food_query": "zanahoria", "grams_per_portion": 65 },
-      { "food_query": "choclo", "grams_per_portion": 15 },
-      { "food_query": "cebolla", "grams_per_portion": 150 },
-      { "food_query": "morron rojo", "grams_per_portion": 40 },
-      { "food_query": "pasas de uva", "grams_per_portion": 15 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 90
+      },
+      {
+        "food_query": "papa",
+        "grams_per_portion": 65
+      },
+      {
+        "food_query": "zapallo",
+        "grams_per_portion": 65
+      },
+      {
+        "food_query": "batata",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "zanahoria",
+        "grams_per_portion": 65
+      },
+      {
+        "food_query": "choclo",
+        "grams_per_portion": 15
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 150
+      },
+      {
+        "food_query": "morron rojo",
+        "grams_per_portion": 40
+      },
+      {
+        "food_query": "pasas de uva",
+        "grams_per_portion": 15
+      }
     ]
   },
   {
     "slug": "vitel_tone",
     "display_name": "Vitel toné",
-    "aliases": ["vitel tone", "vitel toné", "vitel toner"],
+    "aliases": [
+      "vitel tone",
+      "vitel toné",
+      "vitel toner"
+    ],
     "default_portion_g": 300,
     "source_url": "https://www.hellmanns.com/ar/r/vitel-ton-la-receta-definitiva.html/216250",
     "components": [
-      { "food_query": "peceto", "grams_per_portion": 200 },
-      { "food_query": "atun en lata", "grams_per_portion": 30 },
-      { "food_query": "mayonesa", "grams_per_portion": 35 },
-      { "food_query": "crema de leche", "grams_per_portion": 25 },
-      { "food_query": "anchoa", "grams_per_portion": 5 },
-      { "food_query": "alcaparras", "grams_per_portion": 5 }
+      {
+        "food_query": "Vacuno, PROMEDIO",
+        "grams_per_portion": 200
+      },
+      {
+        "food_query": "atun en lata",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "mayonesa",
+        "grams_per_portion": 35
+      },
+      {
+        "food_query": "crema de leche",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "anchoa",
+        "grams_per_portion": 5
+      },
+      {
+        "food_query": "alcaparras",
+        "grams_per_portion": 5
+      }
     ]
   },
   {
     "slug": "pizza_fugazzeta",
     "display_name": "Pizza fugazzeta (porción)",
-    "aliases": ["fugazzeta", "pizza fugazzeta", "fugazza", "fugaza"],
+    "aliases": [
+      "fugazzeta",
+      "pizza fugazzeta",
+      "fugazza",
+      "fugaza"
+    ],
     "default_portion_g": 157,
     "source_url": "https://cocinerosargentinos.com/pizzas/pizza-fugazzeta",
     "components": [
-      { "food_query": "masa de pizza", "grams_per_portion": 60 },
-      { "food_query": "cebolla", "grams_per_portion": 30 },
-      { "food_query": "queso mozzarella", "grams_per_portion": 50 },
-      { "food_query": "queso parmesano", "grams_per_portion": 12 },
-      { "food_query": "aceite de oliva", "grams_per_portion": 5 }
+      {
+        "food_query": "masa de pizza",
+        "grams_per_portion": 60
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "queso mozzarella",
+        "grams_per_portion": 50
+      },
+      {
+        "food_query": "queso parmesano",
+        "grams_per_portion": 12
+      },
+      {
+        "food_query": "aceite de oliva",
+        "grams_per_portion": 5
+      }
     ]
   },
   {
     "slug": "ensalada_rusa",
     "display_name": "Ensalada rusa",
-    "aliases": ["ensalada rusa", "ensaladilla rusa"],
+    "aliases": [
+      "ensalada rusa",
+      "ensaladilla rusa"
+    ],
     "default_portion_g": 192,
     "source_url": "https://www.hellmanns.com/ar/r/ensalada-rusa-un-clsico-navideo.html/238333",
     "components": [
-      { "food_query": "papa", "grams_per_portion": 100 },
-      { "food_query": "zanahoria", "grams_per_portion": 30 },
-      { "food_query": "arvejas", "grams_per_portion": 30 },
-      { "food_query": "mayonesa", "grams_per_portion": 20 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 12 }
+      {
+        "food_query": "papa",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "zanahoria",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "arvejas",
+        "grams_per_portion": 30
+      },
+      {
+        "food_query": "mayonesa",
+        "grams_per_portion": 20
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 12
+      }
     ]
   },
   {
     "slug": "tarta_acelga",
     "display_name": "Tarta de acelga",
-    "aliases": ["tarta de acelga", "tarta acelga", "tarta de verdura", "tarta de verduras"],
+    "aliases": [
+      "tarta de acelga",
+      "tarta acelga",
+      "tarta de verdura",
+      "tarta de verduras"
+    ],
     "default_portion_g": 255,
     "source_url": "https://www.recetasnestle.com.ar/recetas/tarta-de-acelga",
     "components": [
-      { "food_query": "masa de tarta", "grams_per_portion": 80 },
-      { "food_query": "acelga", "grams_per_portion": 100 },
-      { "food_query": "huevo de gallina", "grams_per_portion": 25 },
-      { "food_query": "queso rallado", "grams_per_portion": 20 },
-      { "food_query": "cebolla", "grams_per_portion": 30 }
+      {
+        "food_query": "masa de tarta",
+        "grams_per_portion": 80
+      },
+      {
+        "food_query": "acelga",
+        "grams_per_portion": 100
+      },
+      {
+        "food_query": "huevo de gallina",
+        "grams_per_portion": 25
+      },
+      {
+        "food_query": "queso rallado",
+        "grams_per_portion": 20
+      },
+      {
+        "food_query": "cebolla",
+        "grams_per_portion": 30
+      }
     ]
   }
 ]
