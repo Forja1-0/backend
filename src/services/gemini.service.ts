@@ -119,9 +119,11 @@ function interpretPrompt(rawText: string): string {
   return `Mensaje WhatsApp de un atleta argentino: "${rawText}"
 
 Clasifica intent. Si es meal_log, separa en items:
-- slug: si el plato esta en el enum, usalo (ej "tuco","milanesa_napolitana").
+- slug: ID de la receta si el plato compuesto esta en el enum.
 - food: nombre simple del alimento si no es receta del enum.
-- qty/unit/measure/state: solo si el usuario los dijo.`;
+- qty/unit/measure/state: solo si el usuario los dijo.
+
+REGLA CRITICA: Si el usuario menciona un plato y una guarnición, o dos cosas separadas (ej: "fideos con tuco", "pollo con arroz"), DEBES separarlos en MULTIPLES items distintos en el array. NO mezcles dos alimentos en un solo item.`;
 }
 
 /**
