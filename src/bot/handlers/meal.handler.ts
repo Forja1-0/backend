@@ -34,12 +34,13 @@ export async function handleMealLog(
   user: User,
   rawText: string,
   normalized: string,
+  aiItems?: import("../../schemas/bot.schema.js").AiMealItem[],
 ): Promise<boolean> {
   const jid = user.wa_chat_id!;
 
   let result: ParseResult;
   try {
-    result = await parseMeal(user.id, normalized, rawText);
+    result = await parseMeal(user.id, normalized, rawText, { aiItems });
   } catch (err) {
     logger.error("meal parser failed", { err, rawText });
     logBotEvent(user.id, EventTypes.MEAL_FAILED, { stage: "parse", error: String(err) });

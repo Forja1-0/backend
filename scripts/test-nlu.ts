@@ -1,5 +1,5 @@
 /**
- * Smoke test manual del NLU adapter.
+ * Smoke test manual del interpreter (antes era NLU adapter).
  *
  *   npx tsx scripts/test-nlu.ts "termne piernas re cansado che"
  *   npx tsx scripts/test-nlu.ts                                   # modo interactivo
@@ -11,13 +11,13 @@
  */
 import "dotenv/config";
 import { createInterface } from "node:readline";
-import { parseUserMessage } from "../src/services/gemini.service.js";
+import { interpretMessage } from "../src/services/gemini.service.js";
 
 const FAKE_USER = "00000000-0000-0000-0000-000000000001";
 
 async function runOnce(text: string): Promise<void> {
   const started = Date.now();
-  const result = await parseUserMessage(text, FAKE_USER);
+  const result = await interpretMessage(text, FAKE_USER);
   const elapsed = Date.now() - started;
   process.stdout.write(`\n[${elapsed} ms] input: "${text}"\n`);
   if (result === null) {

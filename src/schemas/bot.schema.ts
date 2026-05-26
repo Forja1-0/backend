@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RECIPE_SLUGS } from "../bot/constants/recipe-slugs.js";
 
 // Espejo exacto del Intent canonico declarado en bot/parser/intent-classifier.ts.
 // Si agregas un intent alla, agregalo aca tambien.
@@ -24,20 +25,39 @@ export const aiNluIntentSchema = z.enum([
   "unknown",
 ]);
 
-export const aiNluEntitiesSchema = z.object({
-  activity: z.string().min(1).nullable().optional(),
-  value: z.number().nullable().optional(),
-  raw_food_input: z.string().min(1).nullable().optional(),
-  macro_target: z.enum(["kcal", "protein", "carbs", "fat"]).nullable().optional(),
-  description: z.string().min(1).nullable().optional(),
+// ── INTERPRETER UNIFICADO (un solo round-trip a Gemini) ─────
+//
+// La AI es PARSER PURO: parte el mensaje, identifica items, hidrata el
+// resto el backend. Output minimo: sin texto libre, sin reasoning, sin
+// standardized_text, sin entities ricas.
+//
+// Cada item es UNO de:
+//   - recipe:  slug de RECIPE_SLUGS → backend expande recipe_components
+//   - food:    alimento simple → backend lo resuelve contra SARA2
+
+export const aiMealItemSchema = z.object({
+  // slug ∈ RECIPE_SLUGS si la AI reconoce el plato como receta compuesta;
+  // null si es un alimento simple (entonces `food` debe venir poblado).
+  slug: z.string().nullable().optional(),
+  food: z.string().nullable().optional(),
+  qty: z.number().positive().nullable().optional(),
+  unit: z.enum(["g", "units", "measure", "portion"]).nullable().optional(),
+  measure: z.string().nullable().optional(),
+  state: z.enum(["crudo", "cocido"]).nullable().optional(),
+}).refine((it) => Boolean(it.slug || it.food), {
+  message: "item debe traer slug o food",
 });
 
-export const aiNluResponseSchema = z.object({
+export const aiInterpretationSchema = z.object({
   intent: aiNluIntentSchema,
-  standardized_text: z.string().min(1),
-  entities: aiNluEntitiesSchema.default({}),
+  // Poblado SOLO si intent='meal_log'. Para otros intents la AI puede
+  // devolver array vacio.
+  items: z.array(aiMealItemSchema).default([]),
 });
 
 export type AiNluIntent = z.infer<typeof aiNluIntentSchema>;
-export type AiNluEntities = z.infer<typeof aiNluEntitiesSchema>;
-export type AiNluResponse = z.infer<typeof aiNluResponseSchema>;
+export type AiMealItem = z.infer<typeof aiMealItemSchema>;
+export type AiInterpretation = z.infer<typeof aiInterpretationSchema>;
+
+// Re-export para que el responseSchema del SDK use el mismo enum.
+export const RECIPE_SLUG_ENUM = RECIPE_SLUGS as readonly string[];

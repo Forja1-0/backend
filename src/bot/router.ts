@@ -5,8 +5,8 @@ import { matchTraining } from "./parser/training-matcher.js";
 import { logger } from "../config/logger.js";
 import { sendText } from "../services/evolution.service.js";
 import { logBotEvent, EventTypes } from "../services/events.service.js";
-import { parseUserMessage } from "../services/gemini.service.js";
-import type { AiNluEntities } from "../schemas/bot.schema.js";
+import { interpretMessage } from "../services/gemini.service.js";
+import type { AiMealItem } from "../schemas/bot.schema.js";
 import { normalize } from "./parser/normalize.js";
 
 import { handleComplete, handleRpeResponse, handleSkip, handleQuery as handleTrainingQuery } from "./handlers/training.handler.js";
@@ -70,27 +70,23 @@ export async function routeMessage(user: User, rawText: string | null): Promise<
     return;
   }
 
-  // ── 3. NLU ADAPTER (AI) — entra TODO el trafico restante ───
-  const nlu = await parseUserMessage(rawText, user.id);
+  // ── 3. INTERPRETER (AI) — entra TODO el trafico restante ───
+  // Una sola call a Gemini flash-lite. Devuelve intent + (si es meal_log)
+  // items estructurados con slug de receta o food simple. El meal-parser
+  // hidrata directo, sin tocar mas la AI.
+  const nlu = await interpretMessage(rawText, user.id);
   if (nlu && nlu.intent !== "unknown") {
     logBotEvent(user.id, "wa.nlu_classified", {
       jid,
       nlu_intent: nlu.intent,
-      has_entities: Object.values(nlu.entities ?? {}).some((v) => v != null),
+      item_count: nlu.items.length,
     });
-    // Para meal_log: si el NLU extrajo raw_food_input limpio, lo usamos como
-    // input al meal-parser (corrige typos/abreviaciones que el normalize
-    // regex no toca).
-    const dispatchNormalized =
-      nlu.intent === "meal_log" && nlu.entities?.raw_food_input
-        ? normalize(nlu.entities.raw_food_input)
-        : nlu.standardized_text;
     await dispatchByIntent(
       user,
       rawText,
-      dispatchNormalized,
+      normalize(rawText),
       nlu.intent as Intent,
-      nlu.entities,
+      nlu.items,
     );
     return;
   }
@@ -197,10 +193,9 @@ async function dispatchByIntent(
   rawText: string,
   normalized: string,
   intent: Intent,
-  // Solo se setea cuando el dispatch viene del NLU adapter (rama 3 del router).
-  // Los handlers que se benefician (training_complete, meal_log, disruptions,
-  // numeric, nutrition_query) las consumen; el resto las ignora.
-  _entities?: AiNluEntities,
+  // Solo se setea cuando el dispatch viene del interpreter (rama 3 del router).
+  // El handler de meal_log lo consume; el resto lo ignora.
+  aiItems?: AiMealItem[],
 ): Promise<void> {
   switch (intent) {
     case "command_help":   return handleHelp(user);
@@ -227,7 +222,7 @@ async function dispatchByIntent(
     case "disruption_desliz":  return handleDesliz(user, rawText);
 
     case "meal_log": {
-      const handled = await handleMealLog(user, rawText, normalized);
+      const handled = await handleMealLog(user, rawText, normalized, aiItems);
       if (!handled) await handleUnknown(user);
       return;
     }

@@ -1,12 +1,12 @@
 import * as foodRepo from "../../repositories/food.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
-import { splitMealText } from "../../services/gemini.service.js";
-import { canUseAi, recordAiUse } from "../../services/ai-budget.service.js";
+import * as recipeRepo from "../../repositories/recipe.repo.js";
 import { logger } from "../../config/logger.js";
 import { parseMealItems, prepareMealText, type ParsedItem } from "./meal-items.js";
 import { resolveFood, classifyState, type FoodState } from "./food-resolve.js";
 import type { FoodItem, FoodCandidate } from "../../repositories/food.repo.js";
 import type { MealStateClarify, PendingMeal } from "../session.store.js";
+import type { AiMealItem } from "../../schemas/bot.schema.js";
 
 const MATCH_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -57,7 +57,7 @@ export interface ParseResult {
   is_estimate: boolean;
   confidence: number;
   source:
-    | "alias" | "quick" | "descriptive" | "ai" | "none"
+    | "alias" | "quick" | "descriptive" | "ai" | "recipe" | "none"
     | "needs_clarification" | "needs_food_clarification"
     | "needs_state_clarification";
   frequent_meal_id?: string;
@@ -69,24 +69,34 @@ export interface ParseResult {
 
 /**
  * Parser de comidas. La verdad es SIEMPRE food_items (SARA2) + food_portions.
- *   1) ALIAS — frequent_meals del user.
- *   2) QUICK — regex split + resolver determinístico (coverage).
- *   3) AI    — Gemini SOLO separa el texto; el resolver es el mismo.
+ *
+ *   1) ALIAS — frequent_meals del user (match exacto, sin AI).
+ *   2) AI items — si el router ya corrio el interpreter Gemini y devolvio
+ *      una lista estructurada, la hidratamos directo (recipes + SARA2).
+ *      Este es el camino normal.
+ *   3) QUICK — regex local (RESCATE cuando la AI cayo).
+ *   4) Clarify por hint si no entendemos nada.
+ *
  * Si un alimento es ambiguo (varias variedades/estados en la DB) → se
- * pregunta con lista numerada (no se adivina, la AI no inventa macros).
+ * pregunta con lista numerada. Si un item no resuelve (ni receta ni
+ * SARA2) → tambien va al clarify (no se descarta en silencio).
  */
 export async function parseMeal(
   userId: string,
   normalized: string,
   rawText: string,
-  opts: { skipClarification?: boolean } = {},
+  opts: { skipClarification?: boolean; aiItems?: AiMealItem[] } = {},
 ): Promise<ParseResult> {
   const alias = await tryAlias(userId, normalized);
   if (alias) return alias;
 
-  // OJO: `normalized` ya viene sin "." / "," / ";" (los borró normalize()),
-  // así que un mensaje multi-ítem separado por puntos colapsaba en uno solo.
-  // Partimos del raw con prepareMealText() para recuperar los separadores.
+  // Camino normal: el router ya tiene el output del interpreter Gemini.
+  if (opts.aiItems && opts.aiItems.length > 0) {
+    const res = await hydrateAiItems(opts.aiItems, rawText);
+    if (res.items.length > 0 || res.source === "needs_food_clarification") return res;
+  }
+
+  // Rescate regex (la AI fallo). Misma logica que antes.
   const quickItems = parseMealItems(prepareMealText(rawText));
   if (quickItems.length > 0) {
     const res = await resolveItems(quickItems, rawText, "quick");
@@ -100,7 +110,166 @@ export async function parseMeal(
     };
   }
 
-  return tryAi(rawText, userId);
+  return { items: [], totals: zero(), is_estimate: false, confidence: 0, source: "none" };
+}
+
+/**
+ * Hidrata items del interpreter Gemini. Por cada item:
+ *   - slug    → expandir recipe_components × qty, hidratar componentes desde SARA2
+ *   - food    → resolveFood (mismo flow que el quick parser)
+ *   - sin resolver → empujar a clarify queue (NUNCA descartar en silencio).
+ */
+async function hydrateAiItems(
+  aiItems: AiMealItem[],
+  rawText: string,
+): Promise<ParseResult> {
+  const resolved: ParsedMealItem[] = [];
+  const queue: ClarifyEntry[] = [];
+  let isEstimate = false;
+
+  for (const ai of aiItems) {
+    // ── Receta compuesta ────────────────────────────────────
+    if (ai.slug) {
+      const recipe = await recipeRepo.findRecipeBySlug(ai.slug);
+      if (!recipe) {
+        logger.warn("ai returned unknown recipe slug — falling back to food", { slug: ai.slug });
+        if (ai.food) await pushFoodItem(ai, resolved, queue, () => { isEstimate = true; });
+        continue;
+      }
+      const scale = computeRecipeScale(ai, recipe.default_portion_g);
+      for (const comp of recipe.components) {
+        const grams = Math.round(comp.grams_per_portion * scale);
+        if (grams <= 0) continue;
+        const food = comp.food_id ? await foodRepo.getFoodById(comp.food_id) : null;
+        if (!food) {
+          // Componente sin food_id matcheado en el seed: lo registramos como
+          // estimate (sin macros) para que el user vea que esta presente.
+          resolved.push({
+            name: `${comp.food_query} (de ${recipe.display_name})`,
+            grams,
+            kcal: 0, protein_g: 0, carbs_g: 0, fat_g: 0,
+            food_item_id: null, matched_db_name: null,
+            note: `componente sin match en SARA2`,
+          });
+          isEstimate = true;
+          continue;
+        }
+        const f = grams / 100;
+        resolved.push({
+          name: `${food.name} (de ${recipe.display_name})`,
+          grams,
+          kcal: food.kcal_per_100g * f,
+          protein_g: food.protein_per_100g * f,
+          carbs_g: food.carbs_per_100g * f,
+          fat_g: food.fat_per_100g * f,
+          food_item_id: food.id,
+          matched_db_name: food.name,
+          state: comp.state ?? classifyState(food.name),
+        });
+      }
+      continue;
+    }
+    // ── Alimento simple ─────────────────────────────────────
+    if (ai.food) {
+      await pushFoodItem(ai, resolved, queue, () => { isEstimate = true; });
+    }
+  }
+
+  if (queue.length > 0) {
+    return {
+      items: resolved,
+      totals: sumTotals(resolved),
+      is_estimate: isEstimate,
+      confidence: 0,
+      source: "needs_food_clarification",
+      food_clarify: { resolved, queue, raw_input: rawText, is_estimate: isEstimate },
+    };
+  }
+  if (resolved.length === 0) {
+    return { items: [], totals: zero(), is_estimate: false, confidence: 0, source: "none" };
+  }
+
+  const sc = await detectStateClarify(resolved);
+  if (sc) {
+    return {
+      items: resolved,
+      totals: sumTotals(resolved),
+      is_estimate: isEstimate,
+      confidence: 0,
+      source: "needs_state_clarification",
+      state_clarify: sc,
+      raw_input: rawText,
+    };
+  }
+
+  const allMatched = resolved.every((i) => i.matched_db_name);
+  const confidence = allMatched && !isEstimate ? 0.9 : allMatched ? 0.8 : 0.65;
+  return finalize(resolved, isEstimate, confidence, "recipe");
+}
+
+/**
+ * Convierte un AiMealItem (alimento simple) en un ParsedItem y lo resuelve
+ * contra SARA2. Si no resuelve, lo empuja al clarify queue con opcion
+ * "no lo conozco" (bug-fix del silent-drop).
+ */
+async function pushFoodItem(
+  ai: AiMealItem,
+  resolved: ParsedMealItem[],
+  queue: ClarifyEntry[],
+  flagEstimate: () => void,
+): Promise<void> {
+  const pi: ParsedItem = aiToParsedItem(ai);
+  const r = await resolveFood(pi.food);
+
+  if (r.kind === "resolved") {
+    const { entry, estimate } = await buildItem(pi, r.food, r.state);
+    if (estimate) flagEstimate();
+    resolved.push(entry);
+  } else if (r.kind === "ambiguous") {
+    queue.push({
+      item: pi,
+      options: r.options.map((o: FoodCandidate) => ({ food_item_id: o.id, name: o.name })),
+    });
+  } else {
+    // Bug-fix: antes el item se descartaba en silencio. Ahora va al clarify
+    // queue con lista vacia de opciones → el handler le pregunta al user.
+    queue.push({ item: pi, options: [] });
+  }
+}
+
+/**
+ * Convierte el output del interpreter en el formato del parser legacy.
+ * `qty` default 1 cuando el usuario no lo dijo (regla "asumamos").
+ */
+function aiToParsedItem(ai: AiMealItem): ParsedItem {
+  const food = ai.state ? `${ai.food} ${ai.state}` : (ai.food ?? "");
+  const qty = ai.qty ?? 1;
+  const mode: ParsedItem["mode"] =
+    ai.unit === "g" ? "grams" :
+    ai.unit === "units" ? "units" :
+    ai.unit === "measure" ? "measure" :
+    ai.unit === "portion" ? "units" :
+    ai.qty != null ? "units" : "bare";
+  return {
+    raw: ai.food ?? "",
+    mode,
+    qty,
+    measure: ai.measure ?? undefined,
+    food,
+  };
+}
+
+/**
+ * Escala de una receta. Reglas:
+ *   - unit='units'/'portion' → qty porciones (default 1)
+ *   - unit='g' + qty         → qty / default_portion_g
+ *   - unit='measure'         → 1 porcion (el "plato" ya es la porcion)
+ *   - sin qty                → 1 porcion (asumimos)
+ */
+function computeRecipeScale(ai: AiMealItem, defaultPortionG: number): number {
+  if (ai.unit === "g" && ai.qty != null) return ai.qty / defaultPortionG;
+  if (ai.unit === "units" || ai.unit === "portion") return ai.qty ?? 1;
+  return ai.qty ?? 1;
 }
 
 const MEAL_VERB_PREFIX =
@@ -220,6 +389,10 @@ async function resolveItems(
         food_item_id: null, matched_db_name: null,
       });
       isEstimate = true;
+    } else {
+      // Bug-fix silent-drop: items que no resuelven (ni receta ni SARA2)
+      // van al clarify queue con opciones vacias en vez de descartarse.
+      queue.push({ item: pi, options: [] });
     }
   }
 
@@ -270,37 +443,6 @@ export async function applyFoodChoice(
   if (!food) return null;
   const { entry: built } = await buildItem(entry.item, food, classifyState(food.name));
   return built;
-}
-
-// ── 3) AI fallback (SOLO split, sin macros) ─────────────────
-async function tryAi(rawText: string, userId: string): Promise<ParseResult> {
-  if (!canUseAi(userId)) {
-    logger.warn("ai budget exceeded — skipping splitMealText", { userId });
-    return { items: [], totals: zero(), is_estimate: false, confidence: 0, source: "none" };
-  }
-  recordAiUse(userId);
-  const split = await splitMealText(rawText);
-  if (!split || split.length === 0) {
-    return { items: [], totals: zero(), is_estimate: false, confidence: 0, source: "none" };
-  }
-
-  const items: ParsedItem[] = split.map((s) => {
-    const mode: ParsedItem["mode"] =
-      s.unit === "g" ? "grams" :
-      s.unit === "units" ? "units" :
-      s.unit === "measure" ? "measure" :
-      s.qty != null ? "units" : "bare";
-    const food = s.state ? `${s.food} ${s.state}` : s.food;
-    return {
-      raw: s.food,
-      mode,
-      qty: s.qty ?? 1,
-      measure: s.measure ?? undefined,
-      food,
-    };
-  });
-
-  return resolveItems(items, rawText, "ai");
 }
 
 function sumTotals(items: ParsedMealItem[]) {

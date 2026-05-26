@@ -2,28 +2,45 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import type { DailySummaryRow } from "../repositories/daily.repo.js";
-import { aiNluResponseSchema, type AiNluResponse } from "../schemas/bot.schema.js";
+import {
+  aiInterpretationSchema,
+  RECIPE_SLUG_ENUM,
+  type AiInterpretation,
+} from "../schemas/bot.schema.js";
 import { canUseAiNlu, recordAiNluUse } from "./ai-budget.service.js";
 
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 
-const flash = genAI.getGenerativeModel({
-  model: "gemini-2.5-flash",
-  generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
-});
-
+// Modelo "creativo" para el resumen nocturno (varia cada dia).
 const flashWarm = genAI.getGenerativeModel({
   model: "gemini-2.5-flash",
   generationConfig: { temperature: 0.9, maxOutputTokens: 600 },
 });
 
-// Adaptador NLU: temperature 0 para determinismo, JSON forzado via schema
-// (el SDK valida la estructura), corre en CADA mensaje del bot — el
-// classifier local quedo de rescate cuando la AI falla o devuelve unknown.
+// Modelo barato para parser de plan one-shot (no afecta cost del runtime).
+const flashStd = genAI.getGenerativeModel({
+  model: "gemini-2.5-flash",
+  generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
+});
+
+// ════════════════════════════════════════════════════════════
+// INTERPRETER — parser puro, una sola call por mensaje del bot.
 //
-// El responseSchema replica aiNluResponseSchema (Zod) en formato JSON-Schema
-// del SDK. Si cambia el Zod, hay que cambiar este tambien.
-const NLU_INTENTS = [
+// Estrategia de costo:
+//   - Modelo: gemini-2.5-flash-lite (el mas barato de 2.5, sin thinking).
+//   - Sin reasoning: thinkingBudget: 0.
+//   - Output minimo: solo {intent, items[]}. SIN standardized_text, SIN
+//     entities ricas. Los handlers consumen rawText cuando necesitan texto.
+//   - Input minimo: prompt de 2 lineas. El responseSchema (enum de intents
+//     + enum de slugs) hace el trabajo pesado, no el texto.
+//   - maxOutputTokens: 256 (un meal_log con 6 items entra holgado).
+//
+// La AI es el UNICO intérprete: identifica si el mensaje es comida y, si
+// lo es, separa en items (recetas conocidas por slug, o alimentos sueltos).
+// El backend hidrata (recipe_components, SARA2). Cero adivinanza de macros.
+// ════════════════════════════════════════════════════════════
+
+const INTENT_ENUM = [
   "command_help", "command_baja", "command_perfil",
   "greeting", "gratitude", "affirmation", "negation", "correction",
   "numeric",
@@ -33,168 +50,52 @@ const NLU_INTENTS = [
   "unknown",
 ];
 
-const flashNlu = genAI.getGenerativeModel({
-  // gemini-2.5-flash con thinking deshabilitado (thinkingBudget: 0). El
-  // thinking por default consume tokens y agrega 5-8s de latencia —
-  // intolerable para un dispatcher que corre en cada mensaje.
-  //
-  // 2.5-flash-lite seria mas barato pero al momento de implementar esto
-  // estaba saturado (503 frecuentes). 2.5-flash es mas estable.
-  model: "gemini-2.5-flash",
+const flashLite = genAI.getGenerativeModel({
+  model: "gemini-2.5-flash-lite",
   generationConfig: {
     temperature: 0,
-    maxOutputTokens: 512,
-    // thinkingConfig no esta en los types del SDK 0.21 pero el endpoint
-    // lo acepta y devuelve respuesta sin thinking. Casteo para pasarlo.
+    maxOutputTokens: 256,
     ...({ thinkingConfig: { thinkingBudget: 0 } } as object),
     responseMimeType: "application/json",
     responseSchema: {
       type: SchemaType.OBJECT,
       properties: {
-        intent: { type: SchemaType.STRING, enum: NLU_INTENTS },
-        standardized_text: { type: SchemaType.STRING },
-        entities: {
-          type: SchemaType.OBJECT,
-          properties: {
-            activity: { type: SchemaType.STRING, nullable: true },
-            value: { type: SchemaType.NUMBER, nullable: true },
-            raw_food_input: { type: SchemaType.STRING, nullable: true },
-            // No usamos enum en macro_target porque combinarlo con nullable
-            // a veces hace que Gemini ignore el responseSchema entero y
-            // devuelva texto libre. El Zod en el caller valida los valores.
-            macro_target: { type: SchemaType.STRING, nullable: true },
-            description: { type: SchemaType.STRING, nullable: true },
+        intent: { type: SchemaType.STRING, enum: INTENT_ENUM },
+        items: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              // slug ∈ RECIPE_SLUG_ENUM si la AI reconoce el plato como
+              // receta compuesta; null si es alimento simple.
+              slug: { type: SchemaType.STRING, enum: [...RECIPE_SLUG_ENUM, ""], nullable: true },
+              food: { type: SchemaType.STRING, nullable: true },
+              qty: { type: SchemaType.NUMBER, nullable: true },
+              unit: { type: SchemaType.STRING, enum: ["g", "units", "measure", "portion", ""], nullable: true },
+              measure: { type: SchemaType.STRING, nullable: true },
+              state: { type: SchemaType.STRING, enum: ["crudo", "cocido", ""], nullable: true },
+            },
           },
         },
       },
-      required: ["intent", "standardized_text", "entities"],
+      required: ["intent", "items"],
     },
   },
 });
 
-export async function generateText(prompt: string): Promise<string> {
-  const r = await flash.generateContent(prompt);
-  return r.response.text();
-}
-
-// ════════════════════════════════════════════════════════════
-// SPLIT DE COMIDA (NLU — fallback del meal-parser)
-//
-// La AI SOLO separa el texto libre en items con cantidad. NUNCA
-// estima macros: la fuente de verdad es food_items (SARA2) +
-// food_portions. La AI es un intermediario para buscar mejor.
-// ════════════════════════════════════════════════════════════
-export interface SplitMealItem {
-  /** alimento "crudo" tal como lo dijo el usuario (sin cantidad). */
-  food: string;
-  /** número detectado, o null si no dijo cantidad. */
-  qty: number | null;
-  /** 'g' = gramos · 'units' = unidades contables · 'measure' = medida casera · null */
-  unit: "g" | "units" | "measure" | null;
-  /** solo si unit='measure': "plato" | "feta" | "cucharada" | ... */
-  measure: string | null;
-  /** estado si el usuario lo dijo, si no null. */
-  state: "crudo" | "cocido" | null;
-}
-
-export async function splitMealText(rawText: string): Promise<SplitMealItem[] | null> {
-  const prompt = `Sos un parser de mensajes de comida de atletas argentinos. Tu ÚNICO trabajo es SEPARAR el texto en alimentos individuales con su cantidad. NO estimes calorías ni macros — eso lo resuelve otra parte del sistema con una base de datos.
-
-Mensaje del atleta: "${rawText}"
-
-Devolvé SOLO JSON válido (sin markdown, sin texto extra), un array donde cada item es:
-[
-  {
-    "food": "nombre simple del alimento, sin cantidad ni verbo (ej: 'milanesa', 'huevo', 'arroz')",
-    "qty": número o null si no dijo cantidad,
-    "unit": "g" si dijo gramos/kg | "units" si son unidades contables (2 milanesas, 3 huevos) | "measure" si dijo una medida casera (un plato, 2 fetas) | null si no hay cantidad,
-    "measure": "plato"|"feta"|"cucharada"|"taza"|"vaso"|"pote"|"rodaja"|"porcion"|null,
-    "state": "crudo"|"cocido"|null (solo si lo dijo explícitamente)
-  }
-]
-
-REGLAS:
-- Separá "y", "con", "+", comas en items distintos. "milanesa de vaca" es UN item (no separar "de").
-- Conservá la variedad si la dijo: "milanesa de cerdo" → food: "milanesa de cerdo".
-- NO inventes alimentos que no mencionó. NO agregues macros.
-- "2 milanesas" → qty 2, unit "units". "200g de arroz" → qty 200, unit "g". "un plato de fideos" → qty 1, unit "measure", measure "plato".
-- Si no hay ninguna comida, devolvé [].`;
-
-  try {
-    const raw = await generateText(prompt);
-    const jsonMatch = raw.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return null;
-    return JSON.parse(jsonMatch[0]) as SplitMealItem[];
-  } catch (err) {
-    logger.error("gemini splitMealText failed", {
-      message: (err as any)?.message,
-      status: (err as any)?.status,
-      statusText: (err as any)?.statusText,
-      errorDetails: (err as any)?.errorDetails,
-      rawText,
-    });
-    return null;
-  }
-}
-
-/**
- * Self-check de Gemini al arrancar el proceso. Loguea OK o el motivo del fallo
- * para detectar key invalida o modelo retirado sin esperar al primer mensaje.
- *
- * Tambien hace un warmup del modelo NLU: el primer hit del proceso suele
- * tardar 6-8s por cold start del HTTP pool, lo que dispara timeouts en el
- * primer mensaje real del user. Llamarlo aca lo paga el server, no el atleta.
- */
-export async function pingGemini(): Promise<boolean> {
-  try {
-    const r = await flash.generateContent("Respondé con la palabra OK y nada mas.");
-    const text = r.response.text().trim();
-    logger.info("gemini ping ok", { sample: text.slice(0, 30) });
-
-    // Warmup del NLU. fire-and-forget: si falla, el primer mensaje del user
-    // paga el cold start; si va bien, queda caliente.
-    void flashNlu
-      .generateContent(nluPrompt("hola"))
-      .then(() => logger.info("gemini nlu warmup ok"))
-      .catch((err) => logger.warn("gemini nlu warmup failed", { err: (err as Error).message }));
-
-    return true;
-  } catch (err) {
-    logger.error("gemini ping failed — la AI no va a funcionar", {
-      message: (err as any)?.message,
-      status: (err as any)?.status,
-      statusText: (err as any)?.statusText,
-    });
-    return false;
-  }
-}
-
-// ════════════════════════════════════════════════════════════
-// NLU ADAPTER — traductor "mensaje sucio del user" → intent + entities
-//
-// Corre cuando el classifier local quedo con confidence < 0.7. Su unico
-// trabajo es estructurar el texto en un JSON predecible que el router
-// pueda despachar igual que si lo hubiera resuelto el classifier local.
-// NUNCA inventa entidades ni intents fuera del catalogo.
-// ════════════════════════════════════════════════════════════
-
-const NLU_TIMEOUT_MS = 8000;
+const NLU_TIMEOUT_MS = 6000;
 const NLU_MAX_INPUT_CHARS = 500;
 
 /**
  * Extrae el primer objeto JSON balanceado de un string. Tolera preambles
- * ("Here is the JSON:") y fences markdown (\`\`\`json ... \`\`\`) que Gemini
- * mete a veces aunque tenga responseMimeType=application/json.
- * Devuelve el objeto parseado o null si no hay JSON valido.
+ * y fences markdown que el modelo a veces mete aunque tenga responseMimeType.
  */
 function extractJsonObject(raw: string): unknown {
   if (!raw) return null;
   try { return JSON.parse(raw); } catch { /* sigue */ }
   const start = raw.indexOf("{");
   if (start < 0) return null;
-  let depth = 0;
-  let inString = false;
-  let escape = false;
+  let depth = 0, inString = false, escape = false;
   for (let i = start; i < raw.length; i++) {
     const ch = raw[i];
     if (escape) { escape = false; continue; }
@@ -212,89 +113,105 @@ function extractJsonObject(raw: string): unknown {
   return null;
 }
 
-function nluPrompt(rawText: string): string {
-  // Prompt deliberadamente corto: los intents validos vienen forzados por
-  // responseSchema (enum), no hace falta listarlos en texto. Solo damos
-  // las reglas que no se infieren del schema.
-  return `Clasifica el mensaje de un atleta argentino de WhatsApp (puede tener typos/modismos/abreviaciones) segun el schema.
+// Prompt minimo. El schema (enums de intent y slug) hace cumplir todo lo
+// importante; no hace falta repetir reglas en texto.
+function interpretPrompt(rawText: string): string {
+  return `Mensaje WhatsApp de un atleta argentino: "${rawText}"
 
-Reglas:
-- standardized_text: version canonica en español argentino sin typos ni emojis.
-- entities.activity: solo si training_complete (ej "piernas", "pecho", "running"), si no null.
-- entities.value: solo si numeric, si no null.
-- entities.raw_food_input: solo si meal_log, texto limpio de los alimentos con cantidades sin verbos ("200g pollo y un plato arroz"), si no null.
-- entities.macro_target: solo si nutrition_query y se menciona un macro especifico: "kcal"|"protein"|"carbs"|"fat", si no null.
-- entities.description: solo si disruption_*, resumen corto, si no null.
-- Si no entendes nada, intent="unknown".
-
-Mensaje: "${rawText}"`;
+Clasifica intent. Si es meal_log, separa en items:
+- slug: si el plato esta en el enum, usalo (ej "tuco","milanesa_napolitana").
+- food: nombre simple del alimento si no es receta del enum.
+- qty/unit/measure/state: solo si el usuario los dijo.`;
 }
 
 /**
- * Adaptador NLU del bot. Devuelve null si:
- *   - el user agoto su budget diario de NLU
- *   - el input es vacio o demasiado largo
- *   - Gemini timeout (>2s) o error de red
- *   - la respuesta no parsea / no valida contra el schema
- *
- * En cualquiera de esos casos el caller (router) debe caer al classifier
- * local sin reportar nada al usuario.
+ * Interprete unico del bot. Llama UNA vez a Gemini y devuelve intent +
+ * items. Si falla (timeout, error, budget, JSON invalido), devuelve null
+ * y el caller cae al classifier local.
  */
-export async function parseUserMessage(
+export async function interpretMessage(
   rawText: string,
   userId: string,
-): Promise<AiNluResponse | null> {
+): Promise<AiInterpretation | null> {
   const text = rawText.trim();
   if (!text || text.length > NLU_MAX_INPUT_CHARS) return null;
   if (!canUseAiNlu(userId)) {
     logger.debug("nlu budget exhausted, skipping", { userId });
     return null;
   }
-
   recordAiNluUse(userId);
 
   const started = Date.now();
   let raw = "";
   try {
     raw = await Promise.race([
-      flashNlu.generateContent(nluPrompt(text)).then((r) => r.response.text()),
+      flashLite.generateContent(interpretPrompt(text)).then((r) => r.response.text()),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("nlu_timeout")), NLU_TIMEOUT_MS),
       ),
     ]);
-
-    // Gemini 2.5-flash a veces ignora responseMimeType y antepone basura
-    // tipo "Here is the JSON:\n" o envuelve en ```json ... ```. Extraemos
-    // el primer objeto JSON balanceado del raw.
     const json = extractJsonObject(raw);
-    if (!json) throw new Error("no json in nlu response");
+    if (!json) throw new Error("no json in interpreter response");
 
-    const parsed = aiNluResponseSchema.safeParse(json);
+    // Limpieza: el SDK no soporta valores nullable + enum bien, asi que
+    // mandamos "" como placeholder en los enums. Normalizamos a null.
+    if (typeof json === "object" && json !== null && Array.isArray((json as any).items)) {
+      for (const it of (json as any).items) {
+        for (const k of ["slug", "food", "unit", "measure", "state"]) {
+          if (it[k] === "") it[k] = null;
+        }
+      }
+    }
+
+    const parsed = aiInterpretationSchema.safeParse(json);
     if (!parsed.success) {
-      logger.warn("nlu response failed zod validation", {
+      logger.warn("interpreter response failed zod validation", {
         userId,
         issues: parsed.error.issues.slice(0, 3),
         sample: raw.slice(0, 300),
       });
       return null;
     }
-
-    logger.debug("nlu ok", {
+    logger.debug("interpreter ok", {
       userId,
       intent: parsed.data.intent,
+      item_count: parsed.data.items.length,
       latency_ms: Date.now() - started,
     });
     return parsed.data;
   } catch (err) {
-    const msg = (err as Error)?.message ?? "unknown";
-    logger.warn("nlu failed, falling back to local classifier", {
+    logger.warn("interpreter failed, falling back to local classifier", {
       userId,
       latency_ms: Date.now() - started,
-      reason: msg,
+      reason: (err as Error)?.message ?? "unknown",
       raw_sample: raw ? raw.slice(0, 300) : null,
       input: text.slice(0, 120),
     });
     return null;
+  }
+}
+
+/**
+ * Self-check + warmup al boot. Llama una vez al interpreter con un mensaje
+ * trivial para que el HTTP pool quede caliente y el primer mensaje real
+ * del user no pague el cold start de 6-8s.
+ */
+export async function pingGemini(): Promise<boolean> {
+  try {
+    const r = await flashStd.generateContent("Respondé con la palabra OK y nada mas.");
+    logger.info("gemini ping ok", { sample: r.response.text().trim().slice(0, 30) });
+    void flashLite
+      .generateContent(interpretPrompt("hola"))
+      .then(() => logger.info("gemini interpreter warmup ok"))
+      .catch((err) => logger.warn("gemini interpreter warmup failed", { err: (err as Error).message }));
+    return true;
+  } catch (err) {
+    logger.error("gemini ping failed — la AI no va a funcionar", {
+      message: (err as any)?.message,
+      status: (err as any)?.status,
+      statusText: (err as any)?.statusText,
+    });
+    return false;
   }
 }
 
@@ -311,8 +228,8 @@ export interface ParsedExercise {
 }
 
 export interface ParsedTrainingDay {
-  day_of_week: number;        // 0 = domingo
-  session_type: string;       // gym | natacion | bici | corrida | funcional | crossfit | yoga | descanso | otro
+  day_of_week: number;
+  session_type: string;
   session_name: string | null;
   duration_min: number | null;
   exercises: ParsedExercise[];
@@ -370,7 +287,8 @@ REGLAS:
 - Si no podes entender nada del plan, devolve {"coach_name": null, "days": []}.`;
 
   try {
-    const raw = await generateText(prompt);
+    const r = await flashStd.generateContent(prompt);
+    const raw = r.response.text();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       logger.warn("gemini parseTrainingPlan: no JSON in response", { sample: raw.slice(0, 200) });
@@ -401,10 +319,6 @@ export interface NightlySummaryInput {
   summary: DailySummaryRow;
 }
 
-/**
- * Genera el mensaje de cierre del dia. Tono argentino, calido, breve.
- * Distinto cada vez. Tolera datos incompletos (sin plan, sin training).
- */
 export async function generateNightlySummary(d: NightlySummaryInput): Promise<string> {
   const firstName = d.name?.split(" ")[0] ?? "atleta";
   const score = d.summary.performance_score;
