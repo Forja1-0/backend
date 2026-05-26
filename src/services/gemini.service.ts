@@ -68,12 +68,12 @@ const flashLite = genAI.getGenerativeModel({
             properties: {
               // slug ∈ RECIPE_SLUG_ENUM si la AI reconoce el plato como
               // receta compuesta; null si es alimento simple.
-              slug: { type: SchemaType.STRING, enum: [...RECIPE_SLUG_ENUM, ""], nullable: true },
+              slug: { type: SchemaType.STRING, enum: [...RECIPE_SLUG_ENUM], nullable: true },
               food: { type: SchemaType.STRING, nullable: true },
               qty: { type: SchemaType.NUMBER, nullable: true },
-              unit: { type: SchemaType.STRING, enum: ["g", "units", "measure", "portion", ""], nullable: true },
+              unit: { type: SchemaType.STRING, enum: ["g", "units", "measure", "portion"], nullable: true },
               measure: { type: SchemaType.STRING, nullable: true },
-              state: { type: SchemaType.STRING, enum: ["crudo", "cocido", ""], nullable: true },
+              state: { type: SchemaType.STRING, enum: ["crudo", "cocido"], nullable: true },
             },
           },
         },
