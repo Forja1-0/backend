@@ -313,12 +313,52 @@ REGLAS:
 // ════════════════════════════════════════════════════════════
 // RESUMEN NOCTURNO (mensaje warm/personalizado)
 // ════════════════════════════════════════════════════════════
+export interface NightlySummaryGoal {
+  event_type: string;
+  event_name?: string | null;
+  event_date?: string | null;
+  goal_kind?: string | null;
+  goal_metric_value?: number | null;
+  goal_metric_unit?: string | null;
+  goal_metric_label?: string | null;
+  objective_notes?: string | null;
+}
+
 export interface NightlySummaryInput {
   name: string | null;
   nutrition_ok: boolean;
   sleep: number;
   pain: number;
   summary: DailySummaryRow;
+  /** Goal activo del usuario. Null = sin meta (elite legacy). */
+  goal?: NightlySummaryGoal | null;
+}
+
+function formatGoal(g: NightlySummaryGoal | null | undefined): string | null {
+  if (!g) return null;
+  if (g.event_type === "personal_goal") {
+    if (g.goal_kind === "custom" && g.goal_metric_label) {
+      const date = g.event_date ? ` para ${g.event_date}` : "";
+      return `meta del usuario: ${g.goal_metric_label}${date}`;
+    }
+    const kindLabel: Record<string, string> = {
+      lose_weight: "perder",
+      gain_muscle: "ganar masa muscular",
+      improve_time: "mejorar tiempo",
+      reach_distance: "alcanzar distancia",
+    };
+    const action = g.goal_kind ? (kindLabel[g.goal_kind] ?? g.goal_kind) : "objetivo libre";
+    const metric = g.goal_metric_value != null && g.goal_metric_unit
+      ? ` ${g.goal_metric_value}${g.goal_metric_unit}`
+      : "";
+    const date = g.event_date ? ` para ${g.event_date}` : "";
+    return `meta del usuario: ${action}${metric}${date}`;
+  }
+  // Elite legacy: competition / recomp / performance.
+  if (g.event_name && g.event_date) {
+    return `meta del usuario: ${g.event_name} el ${g.event_date}`;
+  }
+  return g.objective_notes ? `meta del usuario: ${g.objective_notes}` : null;
 }
 
 export async function generateNightlySummary(d: NightlySummaryInput): Promise<string> {
@@ -329,9 +369,11 @@ export async function generateNightlySummary(d: NightlySummaryInput): Promise<st
   const proteinAdh = d.summary.protein_adherence_pct;
   const trained = d.summary.training_completed;
   const rpe = d.summary.training_rpe;
+  const goalLine = formatGoal(d.goal);
 
   const dataLines = [
     `nombre: ${firstName}`,
+    goalLine,
     `cumplio plan nutricional: ${d.nutrition_ok ? "si" : "no"}`,
     `sueno (1-5): ${d.sleep}`,
     `dolor (0-10): ${d.pain}`,
@@ -343,6 +385,10 @@ export async function generateNightlySummary(d: NightlySummaryInput): Promise<st
     score != null ? `performance score del dia: ${score}/100` : null,
   ].filter(Boolean).join("\n");
 
+  const goalRule = goalLine
+    ? `- HAY UNA META ACTIVA. Tu mensaje debe conectar 1 metrica del dia con esa meta (empuje suave, no sermon).`
+    : `- No hay meta explicita: alentar habito/consistencia.`;
+
   const prompt = `Sos Forja, un coach argentino que cierra el dia con sus atletas por WhatsApp. Tono: directo, calido, sin azucar, sin diminutivos infantiles. Hablas en argentino ("vos", "dale", "che"), no en espanol neutro. Mensajes cortos (60-120 palabras max).
 
 Datos del dia del atleta:
@@ -351,6 +397,7 @@ ${dataLines}
 Devolveme UN mensaje de cierre nocturno para mandarle por WhatsApp. Reglas:
 - Empezar por su nombre cuando suene natural.
 - Mencionar 1 o 2 metricas concretas que importen hoy (no listar todo).
+${goalRule}
 - Si hubo dolor >= 7, sugerir consulta con kine/medico.
 - Si durmio mal (<=2), priorizar descanso por sobre rendimiento.
 - Si no entreno y no comio bien, sin reto: alentar a manana.
@@ -367,6 +414,7 @@ Mensaje:`;
     return r.response.text().trim();
   } catch (err) {
     logger.error("gemini nightly summary failed", { err });
-    return `Cerramos el día, ${firstName}. ${score != null ? `Score ${score}/100. ` : ""}Mañana seguimos. 💪`;
+    const goalSuffix = goalLine ? ` Tu meta sigue ahi.` : "";
+    return `Cerramos el día, ${firstName}. ${score != null ? `Score ${score}/100. ` : ""}Mañana seguimos.${goalSuffix} 💪`;
   }
 }

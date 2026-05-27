@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { env } from "../config/env.js";
+
+const AMATEUR = env.FORJA_MODE === "amateur";
 
 // ── Step 1: Datos personales → users ──────────────────────
 // Email obligatorio (es identificador unico).
@@ -48,20 +51,80 @@ export const step2Schema = z.object({
 });
 
 // ── Step 3: Objetivo deportivo → goals ────────────────────
+// Soporta dos shapes:
+//   ELITE → event_type ∈ competition|recomp|performance (event_date obligatorio).
+//   AMATEUR → event_type = personal_goal con goal_kind + goal_metric dinamico.
+//
+// El modo del deployment (FORJA_MODE) decide cual default-ear, pero el
+// schema acepta ambos shapes en cualquier modo — eso permite migrar un
+// usuario de elite a amateur (o al reves) sin cambiar la API.
+const eventDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+const goalMetricUnit = z.enum(["kg", "km", "min", "reps", "percent", "custom"]);
+
 export const step3Schema = z.object({
-  event_type: z.enum(["competition", "recomp", "performance"]),
+  event_type: z.enum(["competition", "recomp", "performance", "personal_goal"]),
   event_name: z.string().max(200).nullable().optional(),
-  event_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  event_date: AMATEUR
+    ? eventDateSchema.nullable().optional()
+    : eventDateSchema.optional(),
   distance: z.string().max(100).nullable().optional(),
   objective_notes: z.string().max(500).nullable().optional(),
-}).refine(
-  (d) => d.event_type !== "competition" || !!d.event_name,
-  { message: "competition requires event_name", path: ["event_name"] },
-);
+  // ── Campos amateur (personal_goal). NULL para metas elite clasicas.
+  goal_kind: z
+    .enum(["lose_weight", "gain_muscle", "improve_time", "reach_distance", "custom"])
+    .nullable()
+    .optional(),
+  goal_metric_value: z.number().min(0).max(10000).nullable().optional(),
+  goal_metric_unit: goalMetricUnit.nullable().optional(),
+  goal_metric_label: z.string().max(200).nullable().optional(),
+}).superRefine((d, ctx) => {
+  if (d.event_type === "competition") {
+    if (!d.event_name) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["event_name"],
+        message: "competition requires event_name",
+      });
+    }
+    if (!d.event_date) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["event_date"],
+        message: "competition requires event_date",
+      });
+    }
+  }
+  if (d.event_type === "personal_goal") {
+    if (!d.goal_kind) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["goal_kind"],
+        message: "personal_goal requires goal_kind",
+      });
+    }
+    if (d.goal_kind === "custom" && !d.goal_metric_label) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["goal_metric_label"],
+        message: "custom goal requires goal_metric_label",
+      });
+    }
+  } else if (!AMATEUR && !d.event_date) {
+    // Elite + no personal_goal → event_date obligatorio.
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["event_date"],
+      message: "event_date required in elite mode",
+    });
+  }
+});
 
 // ── Step 4: Plan nutricional → nutrition_plans ────────────
+// En amateur, todos los target_* pueden ser 0 (el usuario decide saltar).
+const kcalMin = AMATEUR ? 0 : 800;
 export const step4Schema = z.object({
-  target_kcal: z.number().int().min(800).max(8000),
+  target_kcal: z.number().int().min(kcalMin).max(8000),
   target_protein_g: z.number().int().min(0),
   target_carbs_g: z.number().int().min(0),
   target_fat_g: z.number().int().min(0),
@@ -104,8 +167,10 @@ const trainingDaySchema = z.object({
   exercises: z.array(exerciseSchema).max(30).nullable().optional(),
 });
 
+// En amateur, training_days puede venir vacio (no hay plan estructurado).
+const trainingDaysMin = AMATEUR ? 0 : 1;
 export const step6Schema = z.object({
-  training_days: z.array(trainingDaySchema).min(1).max(14),
+  training_days: z.array(trainingDaySchema).min(trainingDaysMin).max(14),
   coach_name: z.string().max(200).nullable().optional(),
 });
 
@@ -135,8 +200,10 @@ const frequentMealSchema = z.object({
   total_fat_g: z.number().min(0),
 });
 
+// En amateur, comidas frecuentes opcionales (lista vacia ok).
+const mealsMin = AMATEUR ? 0 : 1;
 export const step7Schema = z.object({
-  meals: z.array(frequentMealSchema).min(1).max(30),
+  meals: z.array(frequentMealSchema).min(mealsMin).max(30),
 });
 
 // ── Consent → consents ────────────────────────────────────

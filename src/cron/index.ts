@@ -2,6 +2,7 @@ import cron from "node-cron";
 import { logger } from "../config/logger.js";
 import { runMorningReminder } from "./morning.cron.js";
 import { runNightCheckin } from "./night.cron.js";
+import { scheduleRemindersCron } from "./reminders.cron.js";
 import { env } from "../config/env.js";
 
 /**
@@ -40,5 +41,9 @@ export function registerCronJobs(): void {
     { timezone: "America/Argentina/Buenos_Aires" },
   );
 
-  logger.info("cron: jobs registered (morning 06:00, night 21:00 ART)");
+  // Recordatorios configurables del usuario (modo amateur principalmente,
+  // pero quedan habilitados en elite tambien — son opt-in via DB).
+  scheduleRemindersCron();
+
+  logger.info("cron: jobs registered (morning 06:00, night 21:00, reminders */1 ART)");
 }

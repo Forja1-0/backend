@@ -122,6 +122,13 @@ export const EventTypes = {
   CRON_MORNING_REMINDER:    "cron.morning_reminder_sent",
   CRON_NIGHT_TICK:          "cron.night_tick",
   CRON_NIGHT_CHECKIN_SENT:  "cron.night_checkin_sent",
+  CRON_REMINDER_TICK:       "cron.user_reminder_tick",
+  CRON_REMINDER_FIRED:      "cron.user_reminder_fired",
+
+  // ── Recordatorios configurables (amateur) ────────────────────────
+  REMINDER_CREATED:         "reminder.created",
+  REMINDER_UPDATED:         "reminder.updated",
+  REMINDER_DELETED:         "reminder.deleted",
 } as const;
 
 export type EventType = (typeof EventTypes)[keyof typeof EventTypes] | (string & {});

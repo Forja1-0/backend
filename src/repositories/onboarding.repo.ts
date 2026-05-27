@@ -128,6 +128,9 @@ export async function saveStep2(userId: string, d: Step2Data) {
 
 // ── Step 3: Goal → goals ──────────────────────────────────
 // Hay UNIQUE INDEX (user_id) WHERE is_active = true → necesita tx.
+// Soporta dos shapes:
+//   ELITE → event_type ∈ competition|recomp|performance con event_date.
+//   AMATEUR → event_type = personal_goal con goal_kind + metric dinamico.
 export async function saveStep3(userId: string, d: Step3Data) {
   return tx(async (client) => {
     await client.query(
@@ -136,16 +139,21 @@ export async function saveStep3(userId: string, d: Step3Data) {
     );
     const { rows } = await client.query<{ id: string }>(
       `INSERT INTO goals
-         (user_id, event_type, event_name, event_date, distance, objective_notes, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, true)
+         (user_id, event_type, event_name, event_date, distance, objective_notes,
+          goal_kind, goal_metric_value, goal_metric_unit, goal_metric_label, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, true)
        RETURNING id`,
       [
         userId,
         d.event_type,
         d.event_name ?? null,
-        d.event_date,
+        d.event_date ?? null,
         d.distance ?? null,
         d.objective_notes ?? null,
+        d.goal_kind ?? null,
+        d.goal_metric_value ?? null,
+        d.goal_metric_unit ?? null,
+        d.goal_metric_label ?? null,
       ],
     );
     await client.query(
@@ -154,6 +162,32 @@ export async function saveStep3(userId: string, d: Step3Data) {
     );
     return rows[0];
   });
+}
+
+// Lectura del goal activo (lo usa el cron nocturno para pasar contexto
+// a Gemini y los mensajes amateur lo muestran como push diario).
+export interface ActiveGoal {
+  event_type: string;
+  event_name: string | null;
+  event_date: string | null;
+  distance: string | null;
+  objective_notes: string | null;
+  goal_kind: string | null;
+  goal_metric_value: number | null;
+  goal_metric_unit: string | null;
+  goal_metric_label: string | null;
+}
+
+export async function getActiveGoal(userId: string): Promise<ActiveGoal | null> {
+  const { rows } = await query<ActiveGoal>(
+    `SELECT event_type, event_name, event_date, distance, objective_notes,
+            goal_kind, goal_metric_value, goal_metric_unit, goal_metric_label
+     FROM goals
+     WHERE user_id = $1 AND is_active = true
+     LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
 }
 
 // ── Step 4: Nutrition plan → nutrition_plans ──────────────

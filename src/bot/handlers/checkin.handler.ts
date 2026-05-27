@@ -1,5 +1,6 @@
 import { getSession, setSession, clearSession } from "../session.store.js";
 import * as dailyRepo from "../../repositories/daily.repo.js";
+import * as onboardingRepo from "../../repositories/onboarding.repo.js";
 import { sendText } from "../../services/evolution.service.js";
 import { generateNightlySummary } from "../../services/gemini.service.js";
 import * as T from "../personality/templates.js";
@@ -121,6 +122,15 @@ export async function handleCheckinResponse(
       performance_score: summary.performance_score ?? null,
     });
 
+    // Goal activo: pasamos como contexto al prompt para que el cierre
+    // empuje hacia la meta del usuario (especialmente en modo amateur).
+    let goal: Awaited<ReturnType<typeof onboardingRepo.getActiveGoal>> = null;
+    try {
+      goal = await onboardingRepo.getActiveGoal(user.id);
+    } catch (err) {
+      logger.warn("nightly goal lookup failed", { err, userId: user.id });
+    }
+
     // ── Mensaje warm/AI siempre ──────────────────────────────
     try {
       const message = await generateNightlySummary({
@@ -129,6 +139,7 @@ export async function handleCheckinResponse(
         sleep: session.sleep,
         pain,
         summary,
+        goal,
       });
       await sendText(jid, message, {
         userId: user.id,

@@ -16,6 +16,11 @@ const schema = z.object({
   TZ: z.string().default("America/Argentina/Buenos_Aires"),
   UPLOAD_DIR: z.string().default("./data/uploads"),
   MAX_FILE_SIZE: z.coerce.number().default(10485760),
+  // FORJA_MODE controla el ICP del despliegue.
+  // "elite": atleta competitivo (ICP original, validaciones estrictas).
+  // "amateur": gym-goer casual (steps opcionales, meta libre, sin suscripciones).
+  // La DB es la misma para ambos; el flag solo afecta validaciones y cron jobs.
+  FORJA_MODE: z.enum(["elite", "amateur"]).default("elite"),
 });
 
 export const env = schema.parse(process.env);
