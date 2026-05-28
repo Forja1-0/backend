@@ -1,5 +1,6 @@
 import type { User } from "../../types/user.types.js";
 import * as trainingRepo from "../../repositories/training.repo.js";
+import * as dailyRepo from "../../repositories/daily.repo.js";
 import { getSession, setSession, clearSession } from "../session.store.js";
 import { sendText } from "../../services/evolution.service.js";
 import * as T from "../personality/templates.js";
@@ -41,6 +42,7 @@ export async function handleComplete(user: User, normalized: string): Promise<vo
   }
 
   const log = await trainingRepo.logTrainingComplete(user, sessionName, matchedPlanId);
+  await refreshDaily(user.id);
   setSession(jid, { flow: "rpe_capture", training_log_id: log.id });
 
   logBotEvent(user.id, EventTypes.TRAINING_COMPLETED, {
@@ -71,6 +73,19 @@ export async function handleComplete(user: User, normalized: string): Promise<vo
   logger.debug("training match", { userId: user.id, match, dayOffset });
 }
 
+/**
+ * Refresca el daily_summary de hoy tras loguear/actualizar un entreno, para
+ * que el perfil web refleje el dia al instante. Best-effort: el training_log
+ * ya quedo guardado, no queremos romper el flujo del bot si esto falla.
+ */
+async function refreshDaily(userId: string): Promise<void> {
+  try {
+    await dailyRepo.refreshDailySummary(userId);
+  } catch (err) {
+    logger.error("refreshDailySummary failed after training", { err, userId });
+  }
+}
+
 function computeTodayDow(timezone: string | null | undefined): number {
   const tz = timezone || "America/Argentina/Buenos_Aires";
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -97,6 +112,7 @@ export async function handleRpeResponse(user: User, text: string): Promise<void>
   }
 
   await trainingRepo.setRpe(session.training_log_id, rpe);
+  await refreshDaily(user.id);
   clearSession(jid);
   logBotEvent(user.id, EventTypes.TRAINING_RPE_SAVED, {
     rpe,
@@ -112,6 +128,7 @@ export async function handleSkip(user: User): Promise<void> {
   const jid = user.wa_chat_id!;
   try {
     await trainingRepo.logTrainingSkip(user.id);
+    await refreshDaily(user.id);
   } catch (err) {
     logger.error("logTrainingSkip failed", { err, userId: user.id });
   }

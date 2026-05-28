@@ -21,14 +21,19 @@ export interface DailySummaryRow {
 }
 
 /**
- * Upsert del daily_summary del dia, combinando macros del dia +
- * datos del checkin + RPE del training_log si existe.
- * Devuelve la fila final con performance_score calculado.
+ * Recalcula los macros del dia de HOY desde meal_logs (+ RPE del training_log
+ * de hoy) y hace UPSERT en daily_summaries. NO requiere checkin: se llama cada
+ * vez que el usuario carga una comida o un entreno por WhatsApp, asi el dia
+ * actual aparece al instante en el perfil web (antes esto solo pasaba en el
+ * checkin nocturno y el dia quedaba vacio hasta entonces).
+ *
+ * IMPORTANTE: este path NUNCA escribe `training_completed`. Esa columna es el
+ * sentinela de "checkin hecho" (lo usan hasCheckinToday y getCheckinCandidates):
+ * si la seteasemos al loguear un entreno, el checkin nocturno dejaria de
+ * dispararse para ese usuario. La completitud del entreno ya vive en
+ * training_logs, que es lo que leen overview/training.
  */
-export async function upsertDailySummary(
-  userId: string,
-  checkin: CheckinData,
-): Promise<DailySummaryRow> {
+export async function refreshDailySummary(userId: string): Promise<DailySummaryRow | null> {
   const { rows: macroRows } = await query<{
     total_kcal: number;
     total_protein_g: number;
@@ -48,37 +53,28 @@ export async function upsertDailySummary(
   );
   const macros = macroRows[0];
 
-  const { rows: planRows } = await query<{
-    target_kcal: number;
-    target_protein_g: number;
-  }>(
+  const { rows: planRows } = await query<{ target_kcal: number; target_protein_g: number }>(
     `SELECT target_kcal, target_protein_g FROM nutrition_plans
      WHERE user_id = $1 AND is_active = true LIMIT 1`,
     [userId],
   );
   const plan = planRows[0];
+  const kcalAdh = plan ? Math.min((macros.total_kcal / plan.target_kcal) * 100, 150) : null;
+  const proteinAdh = plan ? Math.min((macros.total_protein_g / plan.target_protein_g) * 100, 150) : null;
 
-  const kcalAdh = plan
-    ? Math.min((macros.total_kcal / plan.target_kcal) * 100, 150)
-    : null;
-  const proteinAdh = plan
-    ? Math.min((macros.total_protein_g / plan.target_protein_g) * 100, 150)
-    : null;
-
-  const { rows: tRows } = await query<{ completed: boolean; rpe: number | null }>(
-    `SELECT completed, rpe FROM training_logs
+  const { rows: tRows } = await query<{ rpe: number | null }>(
+    `SELECT rpe FROM training_logs
      WHERE user_id = $1 AND logged_at::date = CURRENT_DATE
      ORDER BY logged_at DESC LIMIT 1`,
     [userId],
   );
-  const training = tRows[0];
+  const trainingRpe = tRows[0]?.rpe ?? null;
 
   await query(
     `INSERT INTO daily_summaries
        (user_id, summary_date, total_kcal, total_protein_g, total_carbs_g, total_fat_g,
-        kcal_adherence_pct, protein_adherence_pct,
-        training_completed, training_rpe)
-     VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6, $7, $8, $9)
+        kcal_adherence_pct, protein_adherence_pct, training_rpe)
+     VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (user_id, summary_date) DO UPDATE SET
        total_kcal = EXCLUDED.total_kcal,
        total_protein_g = EXCLUDED.total_protein_g,
@@ -86,22 +82,10 @@ export async function upsertDailySummary(
        total_fat_g = EXCLUDED.total_fat_g,
        kcal_adherence_pct = EXCLUDED.kcal_adherence_pct,
        protein_adherence_pct = EXCLUDED.protein_adherence_pct,
-       training_completed = COALESCE(EXCLUDED.training_completed, daily_summaries.training_completed),
        training_rpe = COALESCE(EXCLUDED.training_rpe, daily_summaries.training_rpe)`,
-    [
-      userId,
-      macros.total_kcal,
-      macros.total_protein_g,
-      macros.total_carbs_g,
-      macros.total_fat_g,
-      kcalAdh,
-      proteinAdh,
-      training?.completed ?? false,
-      training?.rpe ?? null,
-    ],
+    [userId, macros.total_kcal, macros.total_protein_g, macros.total_carbs_g, macros.total_fat_g, kcalAdh, proteinAdh, trainingRpe],
   );
 
-  // Performance score (la fn SQL ya esta en schema.sql)
   await query(
     `UPDATE daily_summaries
      SET performance_score = calculate_performance_score($1, CURRENT_DATE)
@@ -111,8 +95,50 @@ export async function upsertDailySummary(
 
   const { rows: final } = await query<DailySummaryRow>(
     `SELECT user_id, summary_date::text, total_kcal, total_protein_g, total_carbs_g, total_fat_g,
-            kcal_adherence_pct, protein_adherence_pct,
-            training_completed, training_rpe, performance_score
+            kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, performance_score
+     FROM daily_summaries
+     WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
+    [userId],
+  );
+  return final[0] ?? null;
+}
+
+/**
+ * Upsert del daily_summary del dia para el checkin nocturno: refresca macros +
+ * RPE (reusa refreshDailySummary) y ademas fija `training_completed` desde el
+ * training_log de hoy (o false), que es lo que marca el dia como "checkin
+ * hecho". Devuelve la fila final con performance_score calculado.
+ */
+export async function upsertDailySummary(
+  userId: string,
+  _checkin: CheckinData,
+): Promise<DailySummaryRow> {
+  await refreshDailySummary(userId);
+
+  const { rows: tRows } = await query<{ completed: boolean }>(
+    `SELECT completed FROM training_logs
+     WHERE user_id = $1 AND logged_at::date = CURRENT_DATE
+     ORDER BY logged_at DESC LIMIT 1`,
+    [userId],
+  );
+  // training_completed != null marca el dia como cerrado por el checkin.
+  await query(
+    `UPDATE daily_summaries
+     SET training_completed = $2
+     WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
+    [userId, tRows[0]?.completed ?? false],
+  );
+
+  await query(
+    `UPDATE daily_summaries
+     SET performance_score = calculate_performance_score($1, CURRENT_DATE)
+     WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
+    [userId],
+  );
+
+  const { rows: final } = await query<DailySummaryRow>(
+    `SELECT user_id, summary_date::text, total_kcal, total_protein_g, total_carbs_g, total_fat_g,
+            kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, performance_score
      FROM daily_summaries
      WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
     [userId],

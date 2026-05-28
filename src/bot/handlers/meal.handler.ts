@@ -334,6 +334,15 @@ async function persistMeal(user: User, rawText: string, result: ParseResult): Pr
     confirmed: true,
   });
 
+  // Refrescamos el daily_summary del dia para que el perfil web muestre el
+  // historial/adherencia de HOY al instante (antes solo se rellenaba en el
+  // checkin nocturno). Best-effort: si falla, la comida ya quedo guardada.
+  try {
+    await dailyRepo.refreshDailySummary(user.id);
+  } catch (err) {
+    logger.error("refreshDailySummary failed after meal", { err, userId: user.id });
+  }
+
   if (result.frequent_meal_id) {
     await frequentMealRepo.bumpUseCount(result.frequent_meal_id);
   }

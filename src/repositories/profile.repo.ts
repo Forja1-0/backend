@@ -131,7 +131,7 @@ export async function getOverview(userId: string) {
 
 /* ---------------- Nutrición ---------------- */
 export async function getNutrition(userId: string) {
-  const [active, history, restrictions, summaries] = await Promise.all([
+  const [active, history, restrictions, summaries, recentMeals] = await Promise.all([
     query(
       `SELECT np.id, np.target_kcal, np.target_protein_g, np.target_carbs_g,
               np.target_fat_g, np.meal_distribution, np.nutritionist_name,
@@ -160,12 +160,24 @@ export async function getNutrition(userId: string) {
        ORDER BY summary_date DESC LIMIT 90`,
       [userId],
     ),
+    // Comidas REALES cargadas por el usuario (meal_logs), no las plantillas
+    // (frequent_meals). Es el "historial de comidas" que el perfil no mostraba.
+    query(
+      `SELECT id, input_mode, raw_input, parsed_items,
+              total_kcal, total_protein_g, total_carbs_g, total_fat_g,
+              is_estimate, logged_at
+       FROM meal_logs
+       WHERE user_id = $1 AND confirmed = true
+       ORDER BY logged_at DESC LIMIT 50`,
+      [userId],
+    ),
   ]);
   return {
     active: active.rows[0] ?? null,
     history: history.rows,
     restrictions: restrictions.rows[0] ?? null,
     summaries: summaries.rows.reverse(),
+    recentMeals: recentMeals.rows,
   };
 }
 
