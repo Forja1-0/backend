@@ -32,9 +32,21 @@ export async function getUser(userId: string): Promise<DbUser | null> {
 
 /* ---------------- Overview / Mi Semana ---------------- */
 export async function getOverview(userId: string) {
-  const [goal, plan, remaining, todayTraining, summaries, trainingLogs, events] = await Promise.all([
+  const [
+    goal,
+    plan,
+    remaining,
+    todayTraining,
+    weekPlan,
+    summaries,
+    trainingLogs,
+    monthlyAgg,
+    events,
+  ] = await Promise.all([
     query(
-      `SELECT event_name, event_date, distance, objective_notes, created_at
+      `SELECT event_type, event_name, event_date, distance, objective_notes,
+              goal_kind, goal_metric_value, goal_metric_unit, goal_metric_label,
+              created_at
        FROM goals WHERE user_id = $1 AND is_active = true
        ORDER BY created_at DESC LIMIT 1`,
       [userId],
@@ -54,11 +66,20 @@ export async function getOverview(userId: string) {
        LIMIT 1`,
       [userId],
     ),
+    // Sesiones planeadas en la semana (filas activas en training_plans que no
+    // son descanso). Lo necesita el HomeAmateur para "X de Y sesiones".
+    query(
+      `SELECT COUNT(*)::int AS planned
+       FROM training_plans
+       WHERE user_id = $1 AND is_active = true
+         AND COALESCE(session_type, '') <> 'rest'`,
+      [userId],
+    ),
     query(
       `SELECT summary_date, total_kcal, total_protein_g, total_carbs_g, total_fat_g,
               kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, performance_score
        FROM daily_summaries WHERE user_id = $1
-       ORDER BY summary_date DESC LIMIT 7`,
+       ORDER BY summary_date DESC LIMIT 30`,
       [userId],
     ),
     query(
@@ -66,6 +87,21 @@ export async function getOverview(userId: string) {
        FROM training_logs tl
        WHERE tl.user_id = $1 AND tl.logged_at >= now() - interval '7 days'
        ORDER BY tl.logged_at DESC`,
+      [userId],
+    ),
+    // Agregados 30 dias: sesiones completadas y promedio de adherencia kcal.
+    // Lo usa el bloque "Este mes" del HomeAmateur sin tener que recomputar.
+    query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM training_logs
+            WHERE user_id = $1 AND completed = true
+              AND logged_at >= now() - interval '30 days') AS sessions_done_30d,
+         (SELECT ROUND(AVG(kcal_adherence_pct))::int FROM daily_summaries
+            WHERE user_id = $1 AND summary_date >= (now()::date - interval '30 days')
+              AND kcal_adherence_pct IS NOT NULL) AS nutrition_pct_30d,
+         (SELECT ROUND(AVG(kcal_adherence_pct))::int FROM daily_summaries
+            WHERE user_id = $1 AND summary_date >= (now()::date - interval '7 days')
+              AND kcal_adherence_pct IS NOT NULL) AS nutrition_pct_7d`,
       [userId],
     ),
     query(
@@ -81,8 +117,14 @@ export async function getOverview(userId: string) {
     plan: plan.rows[0] ?? null,
     remaining: remaining.rows[0] ?? null,
     todayTraining: todayTraining.rows[0] ?? null,
+    weekSessionsPlanned: weekPlan.rows[0]?.planned ?? 0,
     summaries: summaries.rows,
     trainingLogs: trainingLogs.rows,
+    monthly: {
+      sessionsDone30d: monthlyAgg.rows[0]?.sessions_done_30d ?? 0,
+      nutritionPct30d: monthlyAgg.rows[0]?.nutrition_pct_30d ?? null,
+      nutritionPct7d: monthlyAgg.rows[0]?.nutrition_pct_7d ?? null,
+    },
     events: events.rows,
   };
 }
