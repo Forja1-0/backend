@@ -43,6 +43,69 @@ export function gratitude(): string {
   ]);
 }
 
+// ════════════════════════════════════════════════════════════
+// PESO CORPORAL (modo amateur — señal de progreso)
+// ════════════════════════════════════════════════════════════
+
+/** Pregunta semanal del cron de peso. */
+export function weightAsk(name: string | null): string {
+  const n = firstName(name);
+  return pick([
+    `¿Cuánto pesás esta semana${n ? ", " + n : ""}? Subite a la balanza y mandame el número (ej: 82.5).`,
+    `Momento balanza${n ? ", " + n : ""} 📏. Pesate y mandame el número — así veo cómo venís.`,
+    `¿Te pesaste esta semana${n ? ", " + n : ""}? Pasame el dato en kg y lo registro.`,
+  ]);
+}
+
+/** Pide el número cuando no se entendió el peso. */
+export function weightNeedNumber(): string {
+  return pick([
+    "Mandame solo el número en kg, ej: *82.5* o *peso 82.5*.",
+    "No te agarré el número. Tirámelo en kg, tipo *81* o *81.4*.",
+  ]);
+}
+
+/**
+ * Confirmación tras registrar peso + lectura de tendencia.
+ *  - deltaFromPrevious: kg vs el registro anterior (negativo = bajó).
+ *  - deltaFromFirst: kg desde el arranque.
+ */
+export function weightRegistered(
+  kg: number,
+  trend: { deltaFromPrevious: number | null; deltaFromFirst: number; count: number },
+): string {
+  const head = pick([
+    `Anotado: *${kg} kg*.`,
+    `Listo, *${kg} kg* registrado.`,
+    `Quedó: *${kg} kg*.`,
+  ]);
+
+  // Primer registro real (count<=1 o sin anterior): sin tendencia todavía.
+  if (trend.count <= 1 || trend.deltaFromPrevious == null) {
+    return `${head} Es tu punto de partida — desde acá medimos. 💪`;
+  }
+
+  const dPrev = trend.deltaFromPrevious;
+  const dFirst = trend.deltaFromFirst;
+  const absFirst = Math.abs(dFirst).toFixed(1).replace(/\.0$/, "");
+
+  let line: string;
+  if (dPrev < 0) {
+    line = pick([`Vas para abajo 👇`, `Seguís bajando, bien ahí.`, `Menos que la vez pasada. Así se hace.`]);
+  } else if (dPrev > 0) {
+    line = pick([`Subió un toque — pasa, mirá la tendencia, no el día.`, `Arriba de la última, nada grave. Lo importante es el promedio.`]);
+  } else {
+    line = `Igual que la última. Estable.`;
+  }
+
+  const since =
+    dFirst < 0 ? ` Desde que arrancaste: *-${absFirst} kg*.`
+    : dFirst > 0 ? ` Desde que arrancaste: *+${absFirst} kg*.`
+    : "";
+
+  return `${head} ${line}${since}`;
+}
+
 export function help(name: string | null): string {
   const n = firstName(name);
   return (
@@ -232,6 +295,23 @@ export function mealConfirmAsk(
     totalLine(totals),
     "\n¿Lo guardo así? Respondé *sí* o *corregir*.",
   ].join("\n");
+}
+
+// Flujo "corregir": borramos de verdad el último registro y pedimos la versión
+// nueva (antes la corrección contaba doble). Mostramos qué se borró para que sea
+// transparente.
+export function correctionDeleted(rawInput: string, kcal: number): string {
+  const label = rawInput.trim().replace(/\s+/g, " ").slice(0, 60);
+  return [
+    `🧽 Listo, borré tu último registro de hoy:`,
+    `_“${label}” (${n0(kcal)} kcal)_`,
+    "",
+    "Mandame la versión corregida y la anoto de nuevo. 👍",
+  ].join("\n");
+}
+
+export function correctionNothingToFix(): string {
+  return "No encuentro un registro de hoy para corregir 🤔 Si querés anotar una comida, mandámela y la registro.";
 }
 
 export interface StateClarifyView {

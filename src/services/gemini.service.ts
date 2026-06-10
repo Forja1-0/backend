@@ -43,7 +43,7 @@ const flashStd = genAI.getGenerativeModel({
 const INTENT_ENUM = [
   "command_help", "command_baja", "command_perfil",
   "greeting", "gratitude", "affirmation", "negation", "correction",
-  "numeric",
+  "numeric", "weight_log",
   "training_complete", "training_skip", "training_query",
   "meal_log", "nutrition_query", "progress_query",
   "disruption_injury", "disruption_illness", "disruption_desliz",
@@ -118,7 +118,7 @@ function extractJsonObject(raw: string): unknown {
 function interpretPrompt(rawText: string): string {
   return `Mensaje WhatsApp de un atleta argentino: "${rawText}"
 
-Clasifica intent. Si es meal_log, separa en items:
+Clasifica intent. Si reporta su PESO CORPORAL (ej: "peso 82", "me pesé 79.5", "81 kg"), intent = weight_log (sin items). Si es meal_log, separa en items:
 - slug: ID de la receta si el plato compuesto esta en el enum.
 - food: nombre simple del alimento si no es receta del enum.
 - qty/unit/measure/state: solo si el usuario los dijo.

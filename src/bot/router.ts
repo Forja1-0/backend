@@ -11,7 +11,8 @@ import { normalize } from "./parser/normalize.js";
 
 import { handleComplete, handleRpeResponse, handleSkip, handleQuery as handleTrainingQuery } from "./handlers/training.handler.js";
 import { handleCheckinResponse } from "./handlers/checkin.handler.js";
-import { handleMealLog, handleMealConfirm, handleMealClarify, handleMealStateClarify, handleMealFoodClarify } from "./handlers/meal.handler.js";
+import { handleMealLog, handleMealConfirm, handleMealClarify, handleMealStateClarify, handleMealFoodClarify, handleMealCorrection } from "./handlers/meal.handler.js";
+import { handleWeightLog, handleWeightCapture } from "./handlers/weight.handler.js";
 import { handleNutritionQuery, handleProgressQuery } from "./handlers/query.handler.js";
 import { handleHelp, handleProfile, handleBaja, handleBajaConfirm } from "./handlers/command.handler.js";
 import { handleInjury, handleIllness, handleDesliz } from "./handlers/disruption.handler.js";
@@ -173,6 +174,9 @@ async function dispatchSession(
     case "meal_food_clarify":
       await handleMealFoodClarify(user, rawText, session);
       return true;
+    case "weight_capture":
+      await handleWeightCapture(user, rawText);
+      return true;
     case "meal_confirm": {
       const c = classify(rawText);
       const decision: "confirm" | "cancel" =
@@ -210,6 +214,8 @@ async function dispatchByIntent(
       // Sin sesion estos no tienen contexto. Tratamos como unknown educadamente.
       return handleUnknown(user);
 
+    case "weight_log":        return handleWeightLog(user, rawText);
+
     case "training_complete": return handleComplete(user, normalized);
     case "training_skip":     return handleSkip(user);
     case "training_query":    return handleTrainingQuery(user);
@@ -229,11 +235,7 @@ async function dispatchByIntent(
 
     case "correction":
       logBotEvent(user.id, "wa.correction_requested", { jid: user.wa_chat_id });
-      await sendText(
-        user.wa_chat_id!,
-        "Mandame de nuevo la comida con las cantidades correctas y piso la anterior, o decime qué querés cambiar.",
-        { userId: user.id, category: "correction_hint" },
-      );
+      await handleMealCorrection(user);
       return;
 
     case "unknown":

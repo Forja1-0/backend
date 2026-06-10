@@ -15,6 +15,7 @@ import {
   type FoodClarify,
 } from "../session.store.js";
 import { classify } from "../parser/intent-classifier.js";
+import { isAutoTargetUser } from "../../services/nutrition-target.service.js";
 import { classifyState } from "../parser/food-resolve.js";
 import { normalize } from "../parser/normalize.js";
 import * as T from "../personality/templates.js";
@@ -126,7 +127,28 @@ export async function handleMealLog(
     return true;
   }
 
-  // ── confidence baja → confirmacion ───────────────────────
+  // ── confidence baja ───────────────────────────────────────
+  // Amateur (sin plan manual): NO interrogamos. La gracia del modo amateur es
+  // que tira sus comidas desordenadas y el bot trackea — registramos la
+  // estimación y le decimos que puede corregir. Elite mantiene el "¿lo guardo?".
+  if (await isAutoTargetUser(user.id)) {
+    await persistMeal(user, rawText, result);
+    logBotEvent(user.id, EventTypes.MEAL_LOGGED, {
+      source: result.source,
+      auto_saved: true,
+      amateur_estimate: true,
+      is_estimate: result.is_estimate,
+      kcal: result.totals.kcal,
+      protein_g: result.totals.protein,
+      carbs_g: result.totals.carbs,
+      fat_g: result.totals.fat,
+      item_count: result.items.length,
+    });
+    await sendMealResult(user, T.mealRegisteredEstimated(result.items, result.totals));
+    return true;
+  }
+
+  // ── Elite: confidence baja → confirmacion ─────────────────
   const pending: PendingMeal = {
     parsed_items: result.items,
     totals: result.totals,
@@ -143,6 +165,40 @@ export async function handleMealLog(
     category: "meal_confirm_ask",
   });
   return true;
+}
+
+/**
+ * Flujo "corregir" SIN sesión activa: el usuario ya tenía una comida guardada
+ * (típicamente el autosave estimado de amateur) y quiere rehacerla. Antes el
+ * bot prometía "piso la anterior" pero NUNCA borraba nada → la corrección
+ * entraba como comida nueva y contaba doble. Ahora borramos de verdad el último
+ * registro de HOY, refrescamos el día y le pedimos la versión corregida.
+ */
+export async function handleMealCorrection(user: User): Promise<void> {
+  const jid = user.wa_chat_id!;
+  const last = await mealRepo.getLastMealToday(user.id);
+  if (!last) {
+    await sendText(jid, T.correctionNothingToFix(), {
+      userId: user.id,
+      category: "correction_nothing",
+    });
+    return;
+  }
+
+  await mealRepo.deleteMealLog(user.id, last.id);
+  try {
+    await dailyRepo.refreshDailySummary(user.id);
+  } catch (err) {
+    logger.error("refreshDailySummary failed after correction", { err, userId: user.id });
+  }
+  logBotEvent(user.id, EventTypes.MEAL_CANCELLED, {
+    via_correction: true,
+    kcal: last.total_kcal,
+  });
+  await sendText(jid, T.correctionDeleted(last.raw_input, last.total_kcal), {
+    userId: user.id,
+    category: "correction_deleted",
+  });
 }
 
 /**

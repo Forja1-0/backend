@@ -1,5 +1,6 @@
 import { normalize, tokenize, extractGrams, extractStandaloneNumber } from "./normalize.js";
 import { fuzzyTokenMatch } from "./fuzzy.js";
+import { parseWeightKg } from "./weight-parse.js";
 import * as P from "./patterns.js";
 
 export type Intent =
@@ -12,6 +13,7 @@ export type Intent =
   | "negation"
   | "correction"
   | "numeric"
+  | "weight_log"
   | "training_complete"
   | "training_skip"
   | "training_query"
@@ -65,6 +67,13 @@ export function classify(input: string): Classification {
   if (P.REGEX_HELP.test(normalized)) return { ...base, intent: "command_help", confidence: 1 };
   if (P.REGEX_BAJA.test(normalized)) return { ...base, intent: "command_baja", confidence: 1 };
   if (P.REGEX_PERFIL.test(normalized)) return { ...base, intent: "command_perfil", confidence: 1 };
+
+  // ── 1b. PESO CORPORAL ("peso 82", "me pesé 79.5", "81 kg") ──
+  // Antes que NUMERO PURO: "peso 82" tiene un número y 2 tokens, caería en
+  // numeric. El guard excluye comidas ("comí 1kg de X" → meal, no peso).
+  if (parseWeightKg(normalized) !== null && !(features.hasMealVerb && features.hasFoodHint)) {
+    return { ...base, intent: "weight_log", confidence: 0.9 };
+  }
 
   // ── 2. NUMERO PURO (RPE, sueño, dolor — solo significativo en sesion) ──
   // Si no hay sesion, igual lo marcamos: el router decide si tiene sentido.

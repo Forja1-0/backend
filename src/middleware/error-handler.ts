@@ -5,6 +5,12 @@ import { HttpError } from "../utils/errors.js";
 import { PdfParseError } from "../services/plan-pdf-parser.service.js";
 import { logger } from "../config/logger.js";
 
+// pg lanza errores con `code` (SQLSTATE) y `constraint`; no exporta una clase
+// para instanceof, así que detectamos por forma.
+function isPgError(err: unknown): err is { code: string; constraint?: string } {
+  return typeof err === "object" && err !== null && typeof (err as { code?: unknown }).code === "string";
+}
+
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err instanceof ZodError) {
     res.status(400).json({ error: "validation_error", issues: err.issues });
@@ -25,6 +31,17 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   }
   if (err instanceof PdfParseError) {
     res.status(422).json({ error: err.message });
+    return;
+  }
+  // Violación de UNIQUE de Postgres (23505): antes caía al 500 genérico.
+  // El caso real es el email ya registrado al editar el Step 1 → 409 con
+  // mensaje de campo amable en vez de "Error 500".
+  if (isPgError(err) && err.code === "23505") {
+    const isEmail = typeof err.constraint === "string" && err.constraint.includes("email");
+    res.status(409).json({
+      error: isEmail ? "ese email ya está registrado" : "ese dato ya está registrado",
+      details: isEmail ? { field: "email" } : undefined,
+    });
     return;
   }
   logger.error("unhandled error", { err });

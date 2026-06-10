@@ -5,6 +5,7 @@ import type {
 } from "../schemas/onboarding.schema.js";
 import { invalidateUserDict } from "../bot/parser/training-matcher.js";
 import { normalizeArPhone } from "../utils/phone.js";
+import { recomputeAutoTargetSafe } from "../services/nutrition-target.service.js";
 import type {
   ParsedNutritionPlan, ParsedTrainingPlanRich,
 } from "../services/plan-pdf-parser.service.js";
@@ -34,15 +35,23 @@ interface UserRow {
 }
 
 // ── Start: create empty user shell ────────────────────────
+// Idempotente por email: si alguien reintenta el alta con un email que ya
+// arrancó, NO explotamos (antes: unique violation → 500). Devolvemos el shell
+// existente para que retome el onboarding donde lo dejó. Sin email (null) cada
+// start crea una fila nueva (los NULL no colisionan en el unique index).
 export async function createUser(input: {
   email?: string | null;
   phone_wa?: string | null;
 }): Promise<UserRow> {
+  const email = input.email ?? null;
+  const phone = input.phone_wa ? normalizeArPhone(input.phone_wa) : null;
   const { rows } = await query<UserRow>(
     `INSERT INTO users (email, phone_wa, onboarding_step, active)
      VALUES ($1, $2, 0, true)
+     ON CONFLICT (email) DO UPDATE
+       SET phone_wa = COALESCE(EXCLUDED.phone_wa, users.phone_wa)
      RETURNING id, name, email, phone_wa, wa_chat_id, active, onboarding_step, created_at`,
-    [input.email ?? null, input.phone_wa ? normalizeArPhone(input.phone_wa) : null],
+    [email, phone],
   );
   return rows[0];
 }
@@ -132,7 +141,7 @@ export async function saveStep2(userId: string, d: Step2Data) {
 //   ELITE → event_type ∈ competition|recomp|performance con event_date.
 //   AMATEUR → event_type = personal_goal con goal_kind + metric dinamico.
 export async function saveStep3(userId: string, d: Step3Data) {
-  return tx(async (client) => {
+  const result = await tx(async (client) => {
     await client.query(
       `UPDATE goals SET is_active = false WHERE user_id = $1 AND is_active = true`,
       [userId],
@@ -162,6 +171,10 @@ export async function saveStep3(userId: string, d: Step3Data) {
     );
     return rows[0];
   });
+  // Cambió la meta → recalcular el target auto (no-op si el user tiene plan
+  // manual). Fuera de la tx: un fallo acá no debe abortar el guardado del goal.
+  await recomputeAutoTargetSafe(userId);
+  return result;
 }
 
 // Lectura del goal activo (lo usa el cron nocturno para pasar contexto
@@ -512,43 +525,6 @@ export async function saveTrainingPlanUpload(
   });
 }
 
-// Devuelve el blob crudo del plan de entrenamiento (para descargar/re-procesar).
-export async function getTrainingPlanFile(userId: string) {
-  const { rows } = await query<{
-    id: string;
-    raw_file_bytes: Buffer | null;
-    raw_file_mime: string | null;
-    raw_file_name: string | null;
-    parsed_data: ParsedTrainingPlanRich;
-    parsed_at: Date;
-  }>(
-    `SELECT id, raw_file_bytes, raw_file_mime, raw_file_name, parsed_data, parsed_at
-     FROM training_plan_files
-     WHERE user_id = $1 AND is_active = true
-     LIMIT 1`,
-    [userId],
-  );
-  return rows[0] ?? null;
-}
-
-export async function getNutritionPlanFile(userId: string) {
-  const { rows } = await query<{
-    id: string;
-    raw_file_bytes: Buffer | null;
-    raw_file_mime: string | null;
-    raw_file_name: string | null;
-    parsed_data: ParsedNutritionPlan;
-    parsed_at: Date;
-  }>(
-    `SELECT id, raw_file_bytes, raw_file_mime, raw_file_name, parsed_data, parsed_at
-     FROM nutrition_plan_files
-     WHERE user_id = $1 AND is_active = true
-     LIMIT 1`,
-    [userId],
-  );
-  return rows[0] ?? null;
-}
-
 // ── Consent → consents ────────────────────────────────────
 export async function saveConsent(
   userId: string,
@@ -571,5 +547,9 @@ export async function saveConsent(
      RETURNING id, consented_at`,
     [userId, d.data_processing, d.international_transfer, d.nutrition_disclaimer, ip, userAgent],
   );
+  // Cierre de onboarding: si el amateur no subió plan, generamos su target
+  // estimado ahora que ya conocemos peso/meta/entrenamiento. No-op si hay
+  // plan manual (elite ya subió macros en el paso 4).
+  await recomputeAutoTargetSafe(userId);
   return rows[0];
 }

@@ -63,6 +63,10 @@ export const EventTypes = {
   CHECKIN_COMPLETED:     "checkin.completed",
   CHECKIN_VALIDATION_FAIL:"checkin.validation_failed",
 
+  // ── Peso corporal (modo amateur) ─────────────────────────────────
+  WEIGHT_LOGGED:         "weight.logged",
+  WEIGHT_INVALID:        "weight.invalid",
+
   // ── Disruptions (legacy events table) ────────────────────────────
   DISRUPTION_LOGGED:     "disruption.logged",
 
@@ -124,6 +128,8 @@ export const EventTypes = {
   CRON_NIGHT_CHECKIN_SENT:  "cron.night_checkin_sent",
   CRON_REMINDER_TICK:       "cron.user_reminder_tick",
   CRON_REMINDER_FIRED:      "cron.user_reminder_fired",
+  CRON_WEIGHT_TICK:         "cron.weight_tick",
+  CRON_WEIGHT_ASK_SENT:     "cron.weight_ask_sent",
 
   // ── Recordatorios configurables (amateur) ────────────────────────
   REMINDER_CREATED:         "reminder.created",

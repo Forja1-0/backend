@@ -14,7 +14,7 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";    -- Fuzzy matching para parser de co
 CREATE TABLE users (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name            TEXT NOT NULL,
-    age             INT NOT NULL CHECK (age BETWEEN 16 AND 70),
+    age             INT NOT NULL CHECK (age BETWEEN 16 AND 100),
     sex             TEXT NOT NULL CHECK (sex IN ('M', 'F', 'X')),
     weight_kg       REAL NOT NULL CHECK (weight_kg > 0),
     height_cm       REAL NOT NULL CHECK (height_cm > 0),

@@ -13,6 +13,36 @@ export interface SaveMealLogParams {
   confirmed: boolean;
 }
 
+export interface LastMealRow {
+  id: string;
+  raw_input: string;
+  total_kcal: number;
+}
+
+// Último registro de comida de HOY (misma definición de "hoy" que usa
+// refreshDailySummary: logged_at::date = CURRENT_DATE). Sirve para el flujo
+// "corregir": antes prometíamos "piso la anterior" pero nunca borrábamos nada
+// → la corrección se guardaba como comida nueva y contaba doble.
+export async function getLastMealToday(userId: string): Promise<LastMealRow | null> {
+  const { rows } = await query<LastMealRow>(
+    `SELECT id, raw_input, total_kcal
+     FROM meal_logs
+     WHERE user_id = $1 AND logged_at::date = CURRENT_DATE
+     ORDER BY logged_at DESC
+     LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function deleteMealLog(userId: string, id: string): Promise<boolean> {
+  const { rowCount } = await query(
+    `DELETE FROM meal_logs WHERE id = $1 AND user_id = $2`,
+    [id, userId],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
 export async function saveMealLog(params: SaveMealLogParams) {
   const { rows } = await query(
     `INSERT INTO meal_logs (

@@ -1,4 +1,5 @@
 import { query, tx } from "../config/db.js";
+import { recomputeAutoTargetSafe } from "../services/nutrition-target.service.js";
 
 /**
  * Repo del perfil web (centro de control del atleta). Solo lee/escribe sobre
@@ -31,6 +32,21 @@ export async function getUser(userId: string): Promise<DbUser | null> {
 }
 
 /* ---------------- Overview / Mi Semana ---------------- */
+
+/**
+ * Racha activa = corrida de días consecutivos (terminando hoy o ayer) con al
+ * menos un registro de comida. Si la última corrida terminó hace 2+ días, la
+ * racha activa es 0 (se cortó). Comparación con strings YYYY-MM-DD para evitar
+ * líos de timezone.
+ */
+function computeActiveStreak(run: number, lastDay: string | null, today: string | null): number {
+  if (!run || !lastDay || !today) return 0;
+  const t = new Date(today + "T00:00:00Z");
+  t.setUTCDate(t.getUTCDate() - 1);
+  const yesterday = t.toISOString().slice(0, 10);
+  return lastDay === today || lastDay === yesterday ? run : 0;
+}
+
 export async function getOverview(userId: string) {
   const [
     goal,
@@ -42,6 +58,9 @@ export async function getOverview(userId: string) {
     trainingLogs,
     monthlyAgg,
     events,
+    weightSeries,
+    weightSummary,
+    habitAgg,
   ] = await Promise.all([
     query(
       `SELECT event_type, event_name, event_date, distance, objective_notes,
@@ -52,7 +71,7 @@ export async function getOverview(userId: string) {
       [userId],
     ),
     query(
-      `SELECT target_kcal, target_protein_g, target_carbs_g, target_fat_g, meal_distribution, nutritionist_name
+      `SELECT target_kcal, target_protein_g, target_carbs_g, target_fat_g, meal_distribution, nutritionist_name, source
        FROM nutrition_plans WHERE user_id = $1 AND is_active = true LIMIT 1`,
       [userId],
     ),
@@ -110,7 +129,52 @@ export async function getOverview(userId: string) {
        ORDER BY occurred_at DESC LIMIT 5`,
       [userId],
     ),
+    // Serie de peso (últimos 14 puntos, ascendente) para el sparkline del Home.
+    query(
+      `SELECT weight_kg, logged_at::text AS logged_at FROM (
+         SELECT weight_kg, logged_at FROM weight_logs
+         WHERE user_id = $1 ORDER BY logged_at DESC LIMIT 14
+       ) s ORDER BY logged_at ASC`,
+      [userId],
+    ),
+    // Resumen de peso: primer registro (partida), último (actual) y conteo.
+    query(
+      `SELECT
+         (SELECT weight_kg FROM weight_logs WHERE user_id = $1 ORDER BY logged_at ASC, created_at ASC LIMIT 1) AS first_kg,
+         (SELECT weight_kg FROM weight_logs WHERE user_id = $1 ORDER BY logged_at DESC, created_at DESC LIMIT 1) AS latest_kg,
+         (SELECT COUNT(*)::int FROM weight_logs WHERE user_id = $1) AS count`,
+      [userId],
+    ),
+    // Racha de hábito: corrida de días consecutivos con comida registrada
+    // (islands por row_number) + comidas en los últimos 7 días.
+    query(
+      `WITH d AS (
+         SELECT DISTINCT logged_at::date AS day
+         FROM meal_logs
+         WHERE user_id = $1 AND confirmed = true
+           AND logged_at >= now() - interval '90 days'
+       ),
+       anchored AS (
+         SELECT day,
+                (SELECT max(day) FROM d) AS last_day,
+                row_number() OVER (ORDER BY day DESC) AS rn
+         FROM d
+       )
+       SELECT
+         (SELECT COUNT(*)::int FROM anchored a
+            WHERE a.day = (a.last_day - (a.rn - 1) * interval '1 day')::date) AS run,
+         (SELECT max(day) FROM d)::text AS last_day,
+         CURRENT_DATE::text AS today,
+         (SELECT COUNT(*)::int FROM meal_logs
+            WHERE user_id = $1 AND confirmed = true
+              AND logged_at >= now() - interval '7 days') AS meals_7d`,
+      [userId],
+    ),
   ]);
+
+  const ws = weightSummary.rows[0];
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+  const h = habitAgg.rows[0];
 
   return {
     goal: goal.rows[0] ?? null,
@@ -126,6 +190,18 @@ export async function getOverview(userId: string) {
       nutritionPct7d: monthlyAgg.rows[0]?.nutrition_pct_7d ?? null,
     },
     events: events.rows,
+    weight: {
+      series: weightSeries.rows.map((r) => ({ date: String(r.logged_at).slice(0, 10), kg: r.weight_kg })),
+      first: ws?.first_kg ?? null,
+      latest: ws?.latest_kg ?? null,
+      count: ws?.count ?? 0,
+      deltaFromFirst:
+        ws?.first_kg != null && ws?.latest_kg != null ? round1(ws.latest_kg - ws.first_kg) : 0,
+    },
+    habit: {
+      dayStreak: computeActiveStreak(h?.run ?? 0, h?.last_day ?? null, h?.today ?? null),
+      mealsThisWeek: h?.meals_7d ?? 0,
+    },
   };
 }
 
@@ -334,6 +410,8 @@ export async function updateBody(
      RETURNING weight_kg, height_cm, body_fat_pct`,
     vals,
   );
+  // Cambió peso/altura → recalcular target estimado (no-op si plan manual).
+  await recomputeAutoTargetSafe(userId);
   return rows[0] ?? null;
 }
 
@@ -366,6 +444,8 @@ export async function updateIdentity(
      RETURNING id AS user_id, name, age, sex, email, phone_wa, timezone`,
     vals,
   );
+  // Edad/sexo afectan el BMR → recalcular target estimado (no-op si plan manual).
+  if (patch.age != null || patch.sex != null) await recomputeAutoTargetSafe(userId);
   return rows[0] ?? null;
 }
 
@@ -396,11 +476,13 @@ export async function updateNutritionPlan(
       [userId],
     );
     const carry = prev.rows[0] ?? {};
+    // source='manual': editar macros a mano = tomar control. A partir de acá
+    // recomputeAutoTarget NO vuelve a pisar este plan.
     const { rows } = await client.query(
       `INSERT INTO nutrition_plans
          (user_id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
-          meal_distribution, nutritionist_name, plan_file_url, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+          meal_distribution, nutritionist_name, plan_file_url, source, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'manual', true)
        RETURNING id, target_kcal, target_protein_g, target_carbs_g, target_fat_g,
                  nutritionist_name, plan_file_url, created_at`,
       [

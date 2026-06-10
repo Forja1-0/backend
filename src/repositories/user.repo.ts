@@ -2,15 +2,9 @@ import { query } from "../config/db.js";
 import type { User } from "../types/user.types.js";
 import { jidToPhone, arPhoneKey } from "../utils/phone.js";
 
-export async function findByJid(jid: string): Promise<User | null> {
-  const { rows } = await query<User>(
-    `SELECT * FROM users WHERE wa_chat_id = $1 LIMIT 1`,
-    [jid],
-  );
-  return rows[0] ?? null;
-}
-
-export async function findByPhone(phone: string): Promise<User | null> {
+// findByPhone es interna (la usa linkOrCreateByJid). El bot resuelve al usuario
+// vía linkOrCreateByJid, no por JID directo.
+async function findByPhone(phone: string): Promise<User | null> {
   // Match por clave nacional (ultimos 10 digitos), no exacto: el onboarding
   // guarda "2645267544" y WhatsApp manda "5492645267544". Ante varias filas
   // (ej: shell de WA + perfil real) preferimos el mas avanzado en onboarding.

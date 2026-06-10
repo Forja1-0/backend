@@ -3,6 +3,7 @@ import { logger } from "../config/logger.js";
 import { runMorningReminder } from "./morning.cron.js";
 import { runNightCheckin } from "./night.cron.js";
 import { scheduleRemindersCron } from "./reminders.cron.js";
+import { runWeightAsk } from "./weight.cron.js";
 import { env } from "../config/env.js";
 
 /**
@@ -41,9 +42,21 @@ export function registerCronJobs(): void {
     { timezone: "America/Argentina/Buenos_Aires" },
   );
 
+  // Pedido semanal de peso (amateur): domingos 10:00.
+  // Cron: "0 10 * * 0"
+  cron.schedule(
+    "0 10 * * 0",
+    () => {
+      runWeightAsk().catch((err) =>
+        logger.error("cron weight ask uncaught", { err }),
+      );
+    },
+    { timezone: "America/Argentina/Buenos_Aires" },
+  );
+
   // Recordatorios configurables del usuario (modo amateur principalmente,
   // pero quedan habilitados en elite tambien — son opt-in via DB).
   scheduleRemindersCron();
 
-  logger.info("cron: jobs registered (morning 06:00, night 21:00, reminders */1 ART)");
+  logger.info("cron: jobs registered (morning 06:00, night 21:00, weight Sun 10:00, reminders */1 ART)");
 }

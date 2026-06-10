@@ -9,7 +9,7 @@ const AMATEUR = env.FORJA_MODE === "amateur";
 export const step1Schema = z.object({
   name: z.string().min(2).max(100),
   email: z.string().email().max(200),
-  age: z.number().int().min(16).max(70),
+  age: z.number().int().min(16).max(100),
   sex: z.enum(["M", "F", "X"]),
   weight_kg: z.number().min(30).max(200),
   height_cm: z.number().min(120).max(230),

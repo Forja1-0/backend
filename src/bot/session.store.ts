@@ -46,6 +46,7 @@ export type SessionState =
       raw_input: string;
     }
   | { flow: "meal_food_clarify"; clarify: FoodClarify }
+  | { flow: "weight_capture" }
   | { flow: "baja_confirm" };
 
 /**
