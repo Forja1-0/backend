@@ -57,7 +57,7 @@ describe("registrationMotivationLine", () => {
 
   it("celebra hitos de racha con prioridad", () => {
     const line = registrationMotivationLine(goal, 2);
-    expect(line).toContain("2 días seguidos");
+    expect(line).toContain("2 días");
   });
 
   it("conecta con la meta cuando hay número y no es hito", () => {

@@ -125,11 +125,12 @@ export function help(name: string | null, amateur = false): string {
       `📊 *Consultar*\n` +
       `   _"cuánto me queda hoy?"_, _"cómo vengo?"_, _"mi perfil"_\n\n` +
       `━━━━━━━━━━━━━━━\n` +
-      `🎯 *EL NÚMERO QUE USO*\n` +
-      `Calculo un objetivo de calorías *estimado* a partir de tu peso, altura, edad y qué tan seguido entrenás. Es una guía para orientarte — *no reemplaza a un nutricionista*. Cada vez que registrás tu peso, lo recalculo.\n\n` +
+      `🎯 *CÓMO SÉ TUS NÚMEROS*\n` +
+      `Cada alimento lo cruzo contra *SARA*, la base oficial argentina de composición de alimentos. Los macros son *reales*, no inventados.\n` +
+      `Tu objetivo de calorías lo calculo con tu peso, altura, edad y cuánto entrenás, y lo reajusto cada vez que te pesás. Es tu número, hecho para vos — igual no reemplaza a un nutricionista.\n\n` +
       `━━━━━━━━━━━━━━━\n` +
       `🔧 Cambió algo → decímelo (_"ahora peso 78"_). Baja → escribime *baja*.\n\n` +
-      `Hablame como a un amigo que sabe del tema. 💪`
+      `No te voy a aplaudir por cualquier cosa. Te voy a empujar para que llegues. 💪`
     );
   }
   return (
@@ -180,13 +181,13 @@ export function welcome(name: string | null, amateur = false): string {
   if (amateur) {
     return (
       `🟢 *Bienvenido${n ? ", " + n : ""}.*\n` +
-      `Soy *Forja*. Desde acá te ayudo a comer mejor y moverte más, sin complicarte.\n\n` +
+      `Soy *Forja*. Vine a que cumplas tu meta, no a hacerte sentir bien sin laburarla.\n\n` +
       `💬 *Hablame natural cuando pase algo:*\n` +
-      `_"comí 200g de pollo"_ → estimo calorías y macros\n` +
+      `_"comí 200g de pollo"_ → calculo macros reales (base SARA)\n` +
       `_"peso 82"_ → registro tu peso y la tendencia\n` +
       `_"hoy fui al gym"_ → lo anoto\n` +
-      `_"cuánto me queda hoy?"_ → te oriento\n\n` +
-      `🎯 Calculo un objetivo de calorías *estimado* para tu meta (es una guía, no reemplaza a un nutri). Lo ajusto solo a medida que cambia tu peso.\n\n` +
+      `_"cuánto me queda hoy?"_ → te digo dónde estás parado\n\n` +
+      `🎯 Tu objetivo de calorías lo calculo para vos y lo reajusto con tu peso (no reemplaza a un nutri).\n\n` +
       `Si te perdés, escribime *ayuda*.\n` +
       `Arrancamos. 💪`
     );
@@ -323,7 +324,8 @@ export function mealRegistered(
   isEstimate: boolean,
 ): string {
   const lines = ["✅ *Registrado.*\n", ...items.map(itemLine), totalLine(totals)];
-  if (isEstimate) lines.push("\n_Valores estimados — si no es preciso, escribime *corregir*._");
+  // Los macros son de SARA (reales). Si algo falta es la cantidad, no el dato.
+  if (isEstimate) lines.push("\n_La cantidad la calculé yo. Si fue otra, escribime *corregir*._");
   return lines.join("\n");
 }
 
@@ -415,19 +417,21 @@ export function mealRegisteredEstimated(
   items: MealSummaryItem[],
   totals: { kcal: number; protein: number; carbs: number; fat: number },
 ): string {
-  const lines = ["✅ *Registrado* (con cantidad estimada).\n"];
+  // Los macros salen de SARA (base oficial) → son reales. Lo único que asumimos
+  // es la CANTIDAD (no la diste). No hedgeamos los números, avisamos la porción.
+  const lines = ["✅ *Registrado.*\n"];
   for (const it of items) {
     const nm = it.matched_db_name ?? it.name;
-    const qty = it.grams > 0 ? `~${it.grams}g de ` : "";
+    const qty = it.grams > 0 ? `${it.grams}g de ` : "";
     lines.push(`• ${qty}${nm} (${it.kcal} kcal)`);
   }
   lines.push(
-    `\n*Total estimado:* ${Math.round(totals.kcal)} kcal · ` +
+    `\n*Total:* ${Math.round(totals.kcal)} kcal · ` +
     `P ${Math.round(totals.protein)}g · ` +
     `C ${Math.round(totals.carbs)}g · ` +
     `G ${Math.round(totals.fat)}g`,
   );
-  lines.push("\n_Si la cantidad no es precisa, escribime *corregir*._");
+  lines.push("\n_La cantidad la puse yo. Si comiste más o menos, escribime *corregir* y lo ajusto._");
   return lines.join("\n");
 }
 
@@ -437,7 +441,7 @@ export function mealRegisteredEstimated(
 
 export function nutritionNoPlan(amateur = false): string {
   if (amateur) {
-    return "Todavía estoy armando tu objetivo estimado. Registrá tu peso (_\"peso 80\"_) o una comida y lo activo para mostrarte cuánto te queda.";
+    return "Todavía estoy armando tu objetivo. Registrá tu peso (_\"peso 80\"_) o una comida y lo activo para mostrarte cuánto te queda.";
   }
   return "Todavía no tenés plan nutricional activo. Completá el onboarding o pedile a tu nutri que cargue los targets.";
 }
@@ -460,15 +464,15 @@ function macroAmount(key: MacroKey, value: number): string {
 
 function headlineLine(a: CoachAssessment, amateur = false): string {
   if (amateur) {
-    // El target amateur es una ESTIMACIÓN, no una prescripción: nada de rojo de
-    // reproche ni "el plan". Tono orientativo.
+    // Target = tu objetivo (lo calcula Forja con confianza). Tono exigente, de
+    // coach con estándares: directo cuando te pasás, sin elogio gratuito.
     switch (a.headline) {
       case "over":
-        return "🟡 *Vas un poco por encima de tu estimado de hoy.*";
+        return "🔴 *Te pasaste hoy.* Está hecho — mañana lo manejás mejor.";
       case "tight":
-        return "🟡 *Te queda poco margen del estimado.*";
+        return "🟡 *Vas al límite.* Cuidá lo que queda, no aflojes ahora.";
       default:
-        return "🟢 *Vas bien para tu estimado de hoy.*";
+        return "🟢 *Vas en línea con tu objetivo.* Sostenelo.";
     }
   }
   switch (a.headline) {
@@ -481,10 +485,10 @@ function headlineLine(a: CoachAssessment, amateur = false): string {
   }
 }
 
-function remainingBlock(a: CoachAssessment, amateur = false): string {
+function remainingBlock(a: CoachAssessment): string {
   const m = a.macros;
   return [
-    amateur ? "📊 *Estimado, te queda hoy:*" : "📊 *Te queda hoy:*",
+    "📊 *Te queda hoy:*",
     `• ${macroAmount("kcal", m.kcal.remaining)}`,
     `• ${n0(m.protein.remaining)}g proteína`,
     `• ${n0(m.carbs.remaining)}g carbos`,
@@ -546,7 +550,7 @@ function recoLine(reco: CoachReco): string | null {
 
 /** Reporte standalone para la consulta "macros" / "cuánta prote me falta". */
 export function coachReport(a: CoachAssessment, reco?: CoachReco | null, amateur = false): string {
-  const parts = [headlineLine(a, amateur), "", remainingBlock(a, amateur)];
+  const parts = [headlineLine(a, amateur), "", remainingBlock(a)];
   const alerts = alertLines(a);
   if (alerts.length) parts.push("", ...alerts);
   const rec = reco ? recoLine(reco) : null;
@@ -588,7 +592,16 @@ export function progressReportAmateur(v: ProgressAmateurView): string {
   parts.push(`📝 Registros esta semana: *${v.daysLogged}/7 días*`);
   if (v.trainingDays > 0) parts.push(`💪 Entrenamientos: *${v.trainingDays}*`);
 
-  parts.push("", "_La constancia es lo que mueve la aguja. Seguí así._ 💪");
+  // Cierre exigente según el volumen real, no un "seguí así" genérico.
+  let close: string;
+  if (v.daysLogged <= 2) {
+    close = "_Pocos registros. Así no puedo ayudarte y vos no vas a ver resultados. Reportá todos los días._";
+  } else if (v.daysLogged >= 6) {
+    close = "_Volumen serio de registros. Esto es lo que separa al que llega del que arranca. No aflojes._ 💪";
+  } else {
+    close = "_Vas, pero podés más. La meta no entiende de semanas a medias._ 💪";
+  }
+  parts.push("", close);
   return parts.join("\n");
 }
 
@@ -608,24 +621,24 @@ export function registrationMotivationLine(
   goal: RegistrationNudgeGoal | null,
   dayStreak: number,
 ): string | null {
-  // 1) Hito de racha: lo más fuerte, tiene prioridad.
+  // 1) Hito de racha: reconocer, pero sin regalar — la meta sigue lejos.
   if (STREAK_MILESTONES.has(dayStreak)) {
     return pick([
-      `🔥 *${dayStreak} días seguidos* reportando. Así se construye — seguí para tu meta.`,
-      `🔥 Llevás *${dayStreak} días seguidos*. La constancia es exactamente lo que te lleva a tu objetivo.`,
+      `🔥 *${dayStreak} días seguidos.* Bien. Ahora demostrá que no fue suerte — no rompas la racha.`,
+      `🔥 *${dayStreak} días al hilo.* Esto recién se pone serio. Sostenelo.`,
     ]);
   }
-  // 2) Conexión con la meta (si hay un número de meta).
+  // 2) Conexión con la meta (si hay un número de meta). Empuje, no palmadita.
   if (goal && goal.goal_metric_value != null && goal.goal_metric_unit) {
     const target = `${n0(goal.goal_metric_value)}${goal.goal_metric_unit}`;
     return pick([
-      `Cada registro te acerca a esos *${target}* tan deseados. Seguí así que va a llegar. 💪`,
-      `Un paso más hacia tus *${target}*. Cada día te acercás. 💪`,
-      `Esto suma para tu meta de *${target}*. Vamos que se puede.`,
+      `Un paso más hacia tus *${target}*. Pero registrar no alcanza: hacé que cada comida cuente.`,
+      `Esos *${target}* no se cumplen solos. Hoy sumaste — mañana también.`,
+      `Vas hacia tus *${target}*. El que afloja un día, lo paga en tres.`,
     ]);
   }
   if (goal && goal.goal_metric_label) {
-    return `Cada registro te acerca a tu meta: *${goal.goal_metric_label}*. Seguí así. 💪`;
+    return `Esto suma para tu meta: *${goal.goal_metric_label}*. No te relajes ahora.`;
   }
   return null;
 }
@@ -639,7 +652,7 @@ export function checkinStart(name: string | null, amateur = false): string {
   // Amateur: el target es un estimado, no un plan que se "cumple". Preguntamos
   // por cómo le fue, no por adherencia binaria a una prescripción.
   const q = amateur
-    ? "¿Cómo venís con la comida hoy? ¿La llevaste bien? (*sí* / *no*)"
+    ? "¿Comiste como te propusiste hoy? Sin vueltas. (*sí* / *no*)"
     : "¿Cumpliste con la nutrición hoy? (*sí* / *no*)";
   return `🌙 *Cierre del día${n ? ", " + n : ""}.*\n\n${q}`;
 }

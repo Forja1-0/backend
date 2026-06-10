@@ -380,11 +380,11 @@ export interface MotivationNudgeInput {
 
 const NUDGE_KIND_BRIEF: Record<MotivationNudgeInput["kind"], string> = {
   morning:
-    'momento: ARRANQUE DEL DÍA (mañana temprano). Energía, intención, "de vos depende cómo arranca hoy". Corto.',
+    'momento: ARRANQUE DEL DÍA. Marcá la cancha: hoy se trabaja. Intención y exigencia, "de vos depende". Corto y filoso.',
   midday:
-    'momento: MITAD DEL DÍA. Recordarle el PORQUÉ de lo que hace, reconectar con la meta. Reflexivo pero breve.',
+    'momento: MITAD DEL DÍA. Recordale el PORQUÉ y que no afloje en la segunda mitad. Reflexivo pero con filo.',
   night:
-    'momento: NOCHE. Cierre cálido, reconocer el esfuerzo del día, "descansá, buen trabajo". Tranquilo.',
+    'momento: NOCHE. Cierre: reconocé SOLO si se lo ganó. Si cumplió, decílo seco y subí la vara para mañana. Firme, no azucarado.',
 };
 
 /**
@@ -414,7 +414,7 @@ export async function generateMotivationNudge(d: MotivationNudgeInput): Promise<
     ? "- HAY META ACTIVA: conectá el mensaje con esa meta (ej. acercarse al peso objetivo). Empuje suave, nunca sermón."
     : "- Sin meta explícita: motivar el hábito y la constancia.";
 
-  const prompt = `Sos Forja, un coach argentino que motiva a sus atletas por WhatsApp. Le escribís SIN que te hayan escrito: un mensaje espontáneo, como un amigo que sabe del tema y se acuerda de vos. Tono argentino ("vos", "dale", "che"), cálido, directo, sin diminutivos infantiles, sin clichés de superación baratos.
+  const prompt = `Sos Forja, un coach argentino EXIGENTE que motiva a sus atletas por WhatsApp. Le escribís SIN que te hayan escrito: un mensaje espontáneo, como alguien que cree en el atleta y JUSTAMENTE por eso no lo deja relajarse. Tono argentino ("vos", "dale", "che"), directo, con estándares altos. NO felicitás por lo mínimo. NO usás clichés de superación baratos ni diminutivos. Empujás, desafiás, recordás que la meta no se cumple sola. Cálido pero firme — un coach, no un porrista.
 
 ${NUDGE_KIND_BRIEF[d.kind]}
 
@@ -424,6 +424,7 @@ ${dataLines}
 Devolveme UN mensaje muy corto (máx 1-3 frases, ~40 palabras) para WhatsApp. Reglas:
 - Que se sienta personal y espontáneo, no un broadcast genérico.
 - Usá 1 dato concreto de arriba si suma (racha, peso, meta). No los listes todos.
+- Si los datos muestran que viene flojo (poca racha, pocos registros), marcáselo sin vueltas y empujalo a reaccionar.
 ${goalRule}
 - Variá el arranque, NO empieces siempre con el nombre ni con "Hola".
 - Sin bullets, sin markdown pesado. 0-1 emoji como mucho.
@@ -440,9 +441,9 @@ Mensaje:`;
   }
   // Fallback templated por kind (nunca dejamos el cron sin mensaje).
   const fallback: Record<MotivationNudgeInput["kind"], string> = {
-    morning: `Arrancá con todo hoy, ${firstName}. Un día más sumando. 💪`,
-    midday: `Acordate por qué empezaste, ${firstName}. Cada registro cuenta.`,
-    night: `Buen trabajo hoy, ${firstName}. Descansá que mañana seguimos.`,
+    morning: `Arrancá, ${firstName}. Hoy se trabaja para esa meta — nadie lo va a hacer por vos. 💪`,
+    midday: `${firstName}, la segunda mitad del día también cuenta. No aflojes ahora.`,
+    night: `Si hoy cumpliste, bien. Mañana subimos la vara, ${firstName}. Descansá.`,
   };
   return fallback[d.kind];
 }
