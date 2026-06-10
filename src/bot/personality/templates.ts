@@ -292,6 +292,7 @@ export interface MealSummaryItem {
 
 /** Entero con separador de miles es-AR ("1239" → "1.239"). */
 const n0 = (x: number): string => Math.round(x).toLocaleString("es-AR");
+const n1 = (x: number): string => (Math.round(x * 10) / 10).toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 function itemLine(it: MealSummaryItem): string {
   const nm = cleanFoodName(it.matched_db_name ?? it.name);
@@ -431,7 +432,10 @@ export function mealRegisteredEstimated(
 // QUERIES
 // ════════════════════════════════════════════════════════════
 
-export function nutritionNoPlan(): string {
+export function nutritionNoPlan(amateur = false): string {
+  if (amateur) {
+    return "Todavía estoy armando tu objetivo estimado. Registrá tu peso (_\"peso 80\"_) o una comida y lo activo para mostrarte cuánto te queda.";
+  }
   return "Todavía no tenés plan nutricional activo. Completá el onboarding o pedile a tu nutri que cargue los targets.";
 }
 
@@ -451,7 +455,19 @@ function macroAmount(key: MacroKey, value: number): string {
   return key === "kcal" ? `${n0(value)} kcal` : `${n0(value)}g`;
 }
 
-function headlineLine(a: CoachAssessment): string {
+function headlineLine(a: CoachAssessment, amateur = false): string {
+  if (amateur) {
+    // El target amateur es una ESTIMACIÓN, no una prescripción: nada de rojo de
+    // reproche ni "el plan". Tono orientativo.
+    switch (a.headline) {
+      case "over":
+        return "🟡 *Vas un poco por encima de tu estimado de hoy.*";
+      case "tight":
+        return "🟡 *Te queda poco margen del estimado.*";
+      default:
+        return "🟢 *Vas bien para tu estimado de hoy.*";
+    }
+  }
   switch (a.headline) {
     case "over":
       return "🔴 *Te pasaste del plan hoy.*";
@@ -462,10 +478,10 @@ function headlineLine(a: CoachAssessment): string {
   }
 }
 
-function remainingBlock(a: CoachAssessment): string {
+function remainingBlock(a: CoachAssessment, amateur = false): string {
   const m = a.macros;
   return [
-    "📊 *Te queda hoy:*",
+    amateur ? "📊 *Estimado, te queda hoy:*" : "📊 *Te queda hoy:*",
     `• ${macroAmount("kcal", m.kcal.remaining)}`,
     `• ${n0(m.protein.remaining)}g proteína`,
     `• ${n0(m.carbs.remaining)}g carbos`,
@@ -526,8 +542,8 @@ function recoLine(reco: CoachReco): string | null {
 }
 
 /** Reporte standalone para la consulta "macros" / "cuánta prote me falta". */
-export function coachReport(a: CoachAssessment, reco?: CoachReco | null): string {
-  const parts = [headlineLine(a), "", remainingBlock(a)];
+export function coachReport(a: CoachAssessment, reco?: CoachReco | null, amateur = false): string {
+  const parts = [headlineLine(a, amateur), "", remainingBlock(a, amateur)];
   const alerts = alertLines(a);
   if (alerts.length) parts.push("", ...alerts);
   const rec = reco ? recoLine(reco) : null;
@@ -536,8 +552,41 @@ export function coachReport(a: CoachAssessment, reco?: CoachReco | null): string
 }
 
 /** Bloque que se adjunta al "✅ Registrado" tras cada comida. */
-export function coachAfterMeal(a: CoachAssessment, reco?: CoachReco | null): string {
-  return `\n━━━━━━━━━━━━━━━\n${coachReport(a, reco)}`;
+export function coachAfterMeal(a: CoachAssessment, reco?: CoachReco | null, amateur = false): string {
+  return `\n━━━━━━━━━━━━━━━\n${coachReport(a, reco, amateur)}`;
+}
+
+/**
+ * "Cómo voy?" en modo amateur. La señal NO es un score de adherencia (eso es
+ * elite) sino la TENDENCIA de peso + la consistencia del hábito. Lideramos con
+ * peso; si todavía no se pesó, lo invitamos. Nunca inventamos un "/100".
+ */
+export interface ProgressAmateurView {
+  weight: { first: number; latest: number; deltaFromFirst: number; count: number } | null;
+  daysLogged: number;
+  trainingDays: number;
+}
+export function progressReportAmateur(v: ProgressAmateurView): string {
+  const parts: string[] = ["📈 *Cómo venís*", ""];
+
+  if (v.weight && v.weight.count >= 2) {
+    const d = v.weight.deltaFromFirst;
+    const verb = d < 0 ? "Bajaste" : d > 0 ? "Subiste" : "Te mantuviste en";
+    const mag = d === 0 ? `${n1(v.weight.latest)} kg` : `*${n1(Math.abs(d))} kg*`;
+    parts.push(
+      `⚖️ ${verb} ${mag} desde que arrancaste _(${n1(v.weight.first)} → ${n1(v.weight.latest)} kg, ${v.weight.count} pesadas)_.`,
+    );
+  } else if (v.weight && v.weight.count === 1) {
+    parts.push(`⚖️ Tenés tu primer peso anotado (${n1(v.weight.latest)} kg). Con la próxima pesada te muestro la tendencia.`);
+  } else {
+    parts.push(`⚖️ Todavía no registraste tu peso. Mandame _"peso 80"_ y empiezo a seguir tu tendencia (es la señal que más importa).`);
+  }
+
+  parts.push(`📝 Registros esta semana: *${v.daysLogged}/7 días*`);
+  if (v.trainingDays > 0) parts.push(`💪 Entrenamientos: *${v.trainingDays}*`);
+
+  parts.push("", "_La constancia es lo que mueve la aguja. Seguí así._ 💪");
+  return parts.join("\n");
 }
 
 // ════════════════════════════════════════════════════════════

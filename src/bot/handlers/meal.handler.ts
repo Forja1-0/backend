@@ -1,4 +1,5 @@
 import type { User } from "../../types/user.types.js";
+import { env } from "../../config/env.js";
 import { parseMeal, applyStateChoice, applyFoodChoice, buildItem, type ParseResult, type ClarifyEntry } from "../parser/meal-parser.js";
 import * as mealRepo from "../../repositories/meal.repo.js";
 import * as foodRepo from "../../repositories/food.repo.js";
@@ -360,7 +361,7 @@ async function sendMealResult(user: User, baseMessage: string): Promise<void> {
     if (row) {
       const assessment = assessDay(row, localHour(user.timezone));
       const reco = await buildCoachReco(assessment);
-      suffix = T.coachAfterMeal(assessment, reco);
+      suffix = T.coachAfterMeal(assessment, reco, env.FORJA_MODE === "amateur");
     }
   } catch (err) {
     logger.error("coach block failed", { err, userId: user.id });

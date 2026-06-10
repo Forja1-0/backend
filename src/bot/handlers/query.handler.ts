@@ -1,7 +1,9 @@
 import type { User } from "../../types/user.types.js";
 import { query } from "../../config/db.js";
+import { env } from "../../config/env.js";
 import { sendText } from "../../services/evolution.service.js";
 import * as dailyRepo from "../../repositories/daily.repo.js";
+import * as weightRepo from "../../repositories/weight.repo.js";
 import { assessDay, localHour } from "../personality/coach.js";
 import { buildCoachReco } from "../coach-reco.js";
 import * as T from "../personality/templates.js";
@@ -14,10 +16,11 @@ import { logBotEvent, EventTypes } from "../../services/events.service.js";
  */
 export async function handleNutritionQuery(user: User): Promise<void> {
   const jid = user.wa_chat_id!;
+  const amateur = env.FORJA_MODE === "amateur";
   const row = await dailyRepo.getDailyRemaining(user.id);
   if (!row) {
     logBotEvent(user.id, EventTypes.QUERY_NO_PLAN, { kind: "nutrition" });
-    await sendText(jid, T.nutritionNoPlan(), {
+    await sendText(jid, T.nutritionNoPlan(amateur), {
       userId: user.id,
       category: "nutrition_no_plan",
     });
@@ -32,7 +35,7 @@ export async function handleNutritionQuery(user: User): Promise<void> {
     local_hour: localHour(user.timezone),
     early_alert: assessment.earlyAlert ? true : false,
   });
-  await sendText(jid, T.coachReport(assessment, reco), {
+  await sendText(jid, T.coachReport(assessment, reco, amateur), {
     userId: user.id,
     category: "nutrition_query",
   });
@@ -57,8 +60,35 @@ export async function handleProgressQuery(user: User): Promise<void> {
        AND summary_date >= CURRENT_DATE - INTERVAL '7 days'`,
     [user.id],
   );
-  const r = rows[0];
-  if (!r || r.days_logged === 0) {
+  const r = rows[0] ?? { avg_score: null, days_logged: 0, training_days: 0 };
+
+  // Amateur: la señal de progreso es PESO (tendencia) + consistencia, no un
+  // score de adherencia. Respondemos con eso aunque no haya days_logged (el
+  // peso puede existir sin comidas registradas esta semana).
+  if (env.FORJA_MODE === "amateur") {
+    const trend = await weightRepo.getWeightTrend(user.id);
+    const view: T.ProgressAmateurView = {
+      weight: trend
+        ? { first: trend.first, latest: trend.latest, deltaFromFirst: trend.deltaFromFirst, count: trend.count }
+        : null,
+      daysLogged: r.days_logged,
+      trainingDays: r.training_days,
+    };
+    logBotEvent(user.id, EventTypes.QUERY_PROGRESS, {
+      has_data: r.days_logged > 0 || trend != null,
+      amateur: true,
+      weight_count: trend?.count ?? 0,
+      days_logged: r.days_logged,
+      training_days: r.training_days,
+    });
+    await sendText(jid, T.progressReportAmateur(view), {
+      userId: user.id,
+      category: "progress_report_amateur",
+    });
+    return;
+  }
+
+  if (r.days_logged === 0) {
     logBotEvent(user.id, EventTypes.QUERY_PROGRESS, { has_data: false });
     await sendText(
       jid,
