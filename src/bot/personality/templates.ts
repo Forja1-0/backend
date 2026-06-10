@@ -270,7 +270,10 @@ export function trainingQuery(session: { name: string | null; type: string; time
   return `Hoy toca *${what}*${when}.`;
 }
 
-export function trainingQueryRest(): string {
+export function trainingQueryRest(amateur = false): string {
+  if (amateur) {
+    return "No tenés un plan de entrenos cargado — entrenás libre. Cuando vayas al gym, avisame con _\"fui al gym\"_ y lo registro. 💪";
+  }
   return "Hoy no tenés sesión programada. Día de descanso.";
 }
 
@@ -593,9 +596,14 @@ export function progressReportAmateur(v: ProgressAmateurView): string {
 // CHECKIN
 // ════════════════════════════════════════════════════════════
 
-export function checkinStart(name: string | null): string {
+export function checkinStart(name: string | null, amateur = false): string {
   const n = firstName(name);
-  return `🌙 *Cierre del día${n ? ", " + n : ""}.*\n\n¿Cumpliste con la nutrición hoy? (*sí* / *no*)`;
+  // Amateur: el target es un estimado, no un plan que se "cumple". Preguntamos
+  // por cómo le fue, no por adherencia binaria a una prescripción.
+  const q = amateur
+    ? "¿Cómo venís con la comida hoy? ¿La llevaste bien? (*sí* / *no*)"
+    : "¿Cumpliste con la nutrición hoy? (*sí* / *no*)";
+  return `🌙 *Cierre del día${n ? ", " + n : ""}.*\n\n${q}`;
 }
 
 export function checkinAskSleep(prevOk: boolean): string {

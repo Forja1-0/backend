@@ -1,4 +1,5 @@
 import type { User } from "../../types/user.types.js";
+import { env } from "../../config/env.js";
 import * as trainingRepo from "../../repositories/training.repo.js";
 import * as dailyRepo from "../../repositories/daily.repo.js";
 import { getSession, setSession, clearSession } from "../session.store.js";
@@ -144,7 +145,7 @@ export async function handleQuery(user: User): Promise<void> {
       has_session: false,
       is_rest: plan?.session_type === "descanso",
     });
-    await sendText(jid, T.trainingQueryRest(), {
+    await sendText(jid, T.trainingQueryRest(env.FORJA_MODE === "amateur"), {
       userId: user.id,
       category: "training_query_rest",
     });

@@ -1,4 +1,5 @@
 import { getSession, setSession, clearSession } from "../session.store.js";
+import { env } from "../../config/env.js";
 import * as dailyRepo from "../../repositories/daily.repo.js";
 import * as onboardingRepo from "../../repositories/onboarding.repo.js";
 import { sendText } from "../../services/evolution.service.js";
@@ -22,7 +23,7 @@ export interface CheckinUser {
 export async function startCheckin(user: CheckinUser): Promise<void> {
   setSession(user.wa_chat_id, { flow: "checkin_nutrition", step: 1 });
   logBotEvent(user.id, EventTypes.CHECKIN_STARTED, { jid: user.wa_chat_id });
-  await sendText(user.wa_chat_id, T.checkinStart(user.name), {
+  await sendText(user.wa_chat_id, T.checkinStart(user.name, env.FORJA_MODE === "amateur"), {
     userId: user.id,
     category: "checkin_start",
   });
