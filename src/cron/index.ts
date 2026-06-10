@@ -4,6 +4,7 @@ import { runMorningReminder } from "./morning.cron.js";
 import { runNightCheckin } from "./night.cron.js";
 import { scheduleRemindersCron } from "./reminders.cron.js";
 import { runWeightAsk } from "./weight.cron.js";
+import { runMotivationTick, planMotivationWeek } from "./motivation.cron.js";
 import { env } from "../config/env.js";
 
 /**
@@ -57,6 +58,38 @@ export function registerCronJobs(): void {
   // Recordatorios configurables del usuario (modo amateur principalmente,
   // pero quedan habilitados en elite tambien — son opt-in via DB).
   scheduleRemindersCron();
+
+  // Motor de motivación (amateur): mensajes espontáneos con frecuencia dinámica.
+  // Tick cada 5 min dispara los nudges vencidos; el planificador semanal (lunes
+  // 00:30) tira el dado de cuántos mensajes manda esa semana. Bootstrap al boot
+  // para que un deploy nuevo planee la semana en curso de una.
+  if (env.FORJA_MODE === "amateur") {
+    cron.schedule(
+      "*/5 * * * *",
+      () => {
+        runMotivationTick().catch((err) =>
+          logger.error("cron motivation tick uncaught", { err }),
+        );
+      },
+      { timezone: "America/Argentina/Buenos_Aires" },
+    );
+    cron.schedule(
+      "30 0 * * 1",
+      () => {
+        planMotivationWeek().catch((err) =>
+          logger.error("cron motivation planner uncaught", { err }),
+        );
+      },
+      { timezone: "America/Argentina/Buenos_Aires" },
+    );
+    // Bootstrap diferido (no bloquea el boot).
+    setTimeout(() => {
+      planMotivationWeek().catch((err) =>
+        logger.error("motivation planner bootstrap failed", { err }),
+      );
+    }, 10_000);
+    logger.info("cron: motivation engine registered (tick */5, planner Mon 00:30 ART)");
+  }
 
   logger.info("cron: jobs registered (morning 06:00, night 21:00, weight Sun 10:00, reminders */1 ART)");
 }

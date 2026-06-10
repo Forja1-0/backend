@@ -361,6 +361,92 @@ function formatGoal(g: NightlySummaryGoal | null | undefined): string | null {
   return g.objective_notes ? `meta del usuario: ${g.objective_notes}` : null;
 }
 
+// ════════════════════════════════════════════════════════════
+// NUDGE MOTIVADOR ESPONTÁNEO (mensaje suelto, sin que el user escriba)
+// ════════════════════════════════════════════════════════════
+export interface MotivationNudgeInput {
+  name: string | null;
+  kind: "morning" | "midday" | "night";
+  goal?: NightlySummaryGoal | null;
+  progress: {
+    dayStreak: number;
+    mealsThisWeek: number;
+    trainingsThisWeek: number;
+    weightLatest: number | null;
+    weightDelta: number | null;
+    weightCount: number;
+  };
+}
+
+const NUDGE_KIND_BRIEF: Record<MotivationNudgeInput["kind"], string> = {
+  morning:
+    'momento: ARRANQUE DEL DÍA (mañana temprano). Energía, intención, "de vos depende cómo arranca hoy". Corto.',
+  midday:
+    'momento: MITAD DEL DÍA. Recordarle el PORQUÉ de lo que hace, reconectar con la meta. Reflexivo pero breve.',
+  night:
+    'momento: NOCHE. Cierre cálido, reconocer el esfuerzo del día, "descansá, buen trabajo". Tranquilo.',
+};
+
+/**
+ * Genera un mensaje motivador espontáneo para mandar por WhatsApp SIN que el
+ * usuario haya escrito nada. El color lo da `kind` (mañana/mediodía/noche); el
+ * contenido se ancla en la meta + el progreso real (racha, peso). Fallback
+ * templated si la AI falla — nunca dejamos al cron sin mensaje.
+ */
+export async function generateMotivationNudge(d: MotivationNudgeInput): Promise<string> {
+  const firstName = d.name?.split(" ")[0] ?? "crack";
+  const goalLine = formatGoal(d.goal);
+  const p = d.progress;
+
+  const dataLines = [
+    `nombre: ${firstName}`,
+    goalLine,
+    p.dayStreak > 0 ? `racha actual: ${p.dayStreak} días seguidos reportando` : "racha: sin racha activa",
+    `comidas reportadas esta semana: ${p.mealsThisWeek}`,
+    `entrenos esta semana: ${p.trainingsThisWeek}`,
+    p.weightLatest != null ? `peso actual: ${p.weightLatest}kg` : null,
+    p.weightDelta != null && p.weightCount >= 2
+      ? `cambio de peso desde que arrancó: ${p.weightDelta > 0 ? "+" : ""}${p.weightDelta}kg`
+      : null,
+  ].filter(Boolean).join("\n");
+
+  const goalRule = goalLine
+    ? "- HAY META ACTIVA: conectá el mensaje con esa meta (ej. acercarse al peso objetivo). Empuje suave, nunca sermón."
+    : "- Sin meta explícita: motivar el hábito y la constancia.";
+
+  const prompt = `Sos Forja, un coach argentino que motiva a sus atletas por WhatsApp. Le escribís SIN que te hayan escrito: un mensaje espontáneo, como un amigo que sabe del tema y se acuerda de vos. Tono argentino ("vos", "dale", "che"), cálido, directo, sin diminutivos infantiles, sin clichés de superación baratos.
+
+${NUDGE_KIND_BRIEF[d.kind]}
+
+Datos reales del atleta (NO inventes otros):
+${dataLines}
+
+Devolveme UN mensaje muy corto (máx 1-3 frases, ~40 palabras) para WhatsApp. Reglas:
+- Que se sienta personal y espontáneo, no un broadcast genérico.
+- Usá 1 dato concreto de arriba si suma (racha, peso, meta). No los listes todos.
+${goalRule}
+- Variá el arranque, NO empieces siempre con el nombre ni con "Hola".
+- Sin bullets, sin markdown pesado. 0-1 emoji como mucho.
+- NO inventes métricas que no estén arriba.
+
+Mensaje:`;
+
+  try {
+    const r = await flashWarm.generateContent(prompt);
+    const text = r.response.text().trim();
+    if (text) return text;
+  } catch (err) {
+    logger.error("gemini motivation nudge failed", { err, kind: d.kind });
+  }
+  // Fallback templated por kind (nunca dejamos el cron sin mensaje).
+  const fallback: Record<MotivationNudgeInput["kind"], string> = {
+    morning: `Arrancá con todo hoy, ${firstName}. Un día más sumando. 💪`,
+    midday: `Acordate por qué empezaste, ${firstName}. Cada registro cuenta.`,
+    night: `Buen trabajo hoy, ${firstName}. Descansá que mañana seguimos.`,
+  };
+  return fallback[d.kind];
+}
+
 export async function generateNightlySummary(d: NightlySummaryInput): Promise<string> {
   const firstName = d.name?.split(" ")[0] ?? "atleta";
   const score = d.summary.performance_score;

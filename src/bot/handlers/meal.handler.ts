@@ -5,6 +5,8 @@ import * as mealRepo from "../../repositories/meal.repo.js";
 import * as foodRepo from "../../repositories/food.repo.js";
 import * as frequentMealRepo from "../../repositories/frequent-meal.repo.js";
 import * as dailyRepo from "../../repositories/daily.repo.js";
+import * as motivationRepo from "../../repositories/motivation.repo.js";
+import { getActiveGoal } from "../../repositories/onboarding.repo.js";
 import { assessDay, localHour } from "../personality/coach.js";
 import { buildCoachReco } from "../coach-reco.js";
 import { sendText } from "../../services/evolution.service.js";
@@ -366,6 +368,23 @@ async function sendMealResult(user: User, baseMessage: string): Promise<void> {
   } catch (err) {
     logger.error("coach block failed", { err, userId: user.id });
   }
+
+  // Cada tanto (amateur), cerramos con una línea que conecta el registro con la
+  // meta o celebra una racha ("cada día más cerca de esos 80kg"). Probabilístico
+  // para que no canse; las queries solo corren si sale el dado.
+  if (env.FORJA_MODE === "amateur" && Math.random() < 0.34) {
+    try {
+      const [goal, snap] = await Promise.all([
+        getActiveGoal(user.id),
+        motivationRepo.getProgressSnapshot(user.id),
+      ]);
+      const line = T.registrationMotivationLine(goal, snap.dayStreak);
+      if (line) suffix += `\n\n${line}`;
+    } catch (err) {
+      logger.error("registration motivation line failed", { err, userId: user.id });
+    }
+  }
+
   await sendText(jid, baseMessage + suffix, {
     userId: user.id,
     category: "meal_registered",

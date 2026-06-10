@@ -592,6 +592,44 @@ export function progressReportAmateur(v: ProgressAmateurView): string {
   return parts.join("\n");
 }
 
+/**
+ * Línea motivadora corta que SE APPENDEA de vez en cuando al "Registrado",
+ * conectando con la meta o celebrando un hito de racha. Devuelve null cuando no
+ * hay nada para decir. El ejemplo de Pedro: "cada día más cerca de esos 80kg".
+ */
+export interface RegistrationNudgeGoal {
+  goal_kind: string | null;
+  goal_metric_value: number | null;
+  goal_metric_unit: string | null;
+  goal_metric_label: string | null;
+}
+const STREAK_MILESTONES = new Set([2, 3, 5, 7, 10, 14, 21, 30, 50, 100]);
+export function registrationMotivationLine(
+  goal: RegistrationNudgeGoal | null,
+  dayStreak: number,
+): string | null {
+  // 1) Hito de racha: lo más fuerte, tiene prioridad.
+  if (STREAK_MILESTONES.has(dayStreak)) {
+    return pick([
+      `🔥 *${dayStreak} días seguidos* reportando. Así se construye — seguí para tu meta.`,
+      `🔥 Llevás *${dayStreak} días seguidos*. La constancia es exactamente lo que te lleva a tu objetivo.`,
+    ]);
+  }
+  // 2) Conexión con la meta (si hay un número de meta).
+  if (goal && goal.goal_metric_value != null && goal.goal_metric_unit) {
+    const target = `${n0(goal.goal_metric_value)}${goal.goal_metric_unit}`;
+    return pick([
+      `Cada registro te acerca a esos *${target}* tan deseados. Seguí así que va a llegar. 💪`,
+      `Un paso más hacia tus *${target}*. Cada día te acercás. 💪`,
+      `Esto suma para tu meta de *${target}*. Vamos que se puede.`,
+    ]);
+  }
+  if (goal && goal.goal_metric_label) {
+    return `Cada registro te acerca a tu meta: *${goal.goal_metric_label}*. Seguí así. 💪`;
+  }
+  return null;
+}
+
 // ════════════════════════════════════════════════════════════
 // CHECKIN
 // ════════════════════════════════════════════════════════════
