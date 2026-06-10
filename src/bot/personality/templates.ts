@@ -106,8 +106,32 @@ export function weightRegistered(
   return `${head} ${line}${since}`;
 }
 
-export function help(name: string | null): string {
+export function help(name: string | null, amateur = false): string {
   const n = firstName(name);
+  if (amateur) {
+    return (
+      `*¿Cómo me usás${n ? ", " + n : ""}?*\n\n` +
+      `Hablame natural por acá y yo llevo la cuenta. No hay formularios ni comandos rígidos.\n\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `💬 *LO QUE ME PODÉS DECIR*\n\n` +
+      `🥗 *Qué comiste*\n` +
+      `   _"comí 200g de pollo y arroz"_, _"dos medialunas y un café"_\n` +
+      `   Estimo las calorías y los macros. Si la estimación no te cierra, escribime *corregir* y lo rehacemos.\n\n` +
+      `⚖️ *Tu peso*\n` +
+      `   _"peso 82"_, _"hoy me pesé 79.5"_\n` +
+      `   Lo registro y te muestro la tendencia (que es lo que importa, no el número de un día).\n\n` +
+      `💪 *Si entrenaste*\n` +
+      `   _"hoy fui al gym"_, _"entrené piernas"_\n\n` +
+      `📊 *Consultar*\n` +
+      `   _"cuánto me queda hoy?"_, _"cómo vengo?"_, _"mi perfil"_\n\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `🎯 *EL NÚMERO QUE USO*\n` +
+      `Calculo un objetivo de calorías *estimado* a partir de tu peso, altura, edad y qué tan seguido entrenás. Es una guía para orientarte — *no reemplaza a un nutricionista*. Cada vez que registrás tu peso, lo recalculo.\n\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `🔧 Cambió algo → decímelo (_"ahora peso 78"_). Baja → escribime *baja*.\n\n` +
+      `Hablame como a un amigo que sabe del tema. 💪`
+    );
+  }
   return (
     `*¿Cómo me usás${n ? ", " + n : ""}?*\n\n` +
     `━━━━━━━━━━━━━━━\n` +
@@ -151,8 +175,22 @@ export function help(name: string | null): string {
  * el onboarding (POST /consent). Es el "tutorial" inicial del bot. Mas corto
  * que help() porque va sin pedirlo y queremos no abrumar.
  */
-export function welcome(name: string | null): string {
+export function welcome(name: string | null, amateur = false): string {
   const n = firstName(name);
+  if (amateur) {
+    return (
+      `🟢 *Bienvenido${n ? ", " + n : ""}.*\n` +
+      `Soy *Forja*. Desde acá te ayudo a comer mejor y moverte más, sin complicarte.\n\n` +
+      `💬 *Hablame natural cuando pase algo:*\n` +
+      `_"comí 200g de pollo"_ → estimo calorías y macros\n` +
+      `_"peso 82"_ → registro tu peso y la tendencia\n` +
+      `_"hoy fui al gym"_ → lo anoto\n` +
+      `_"cuánto me queda hoy?"_ → te oriento\n\n` +
+      `🎯 Calculo un objetivo de calorías *estimado* para tu meta (es una guía, no reemplaza a un nutri). Lo ajusto solo a medida que cambia tu peso.\n\n` +
+      `Si te perdés, escribime *ayuda*.\n` +
+      `Arrancamos. 💪`
+    );
+  }
   return (
     `🟢 *Bienvenido${n ? ", " + n : ""}.*\n` +
     `Soy *Forja*. Desde acá entrenamos juntos todos los días.\n\n` +

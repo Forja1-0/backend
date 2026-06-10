@@ -9,7 +9,7 @@ import * as T from "../personality/templates.js";
 
 export async function handleHelp(user: User): Promise<void> {
   logBotEvent(user.id, EventTypes.WA_COMMAND_RECEIVED, { command: "help" });
-  await sendText(user.wa_chat_id!, T.help(user.name), {
+  await sendText(user.wa_chat_id!, T.help(user.name, env.FORJA_MODE === "amateur"), {
     userId: user.id,
     category: "command_help",
   });

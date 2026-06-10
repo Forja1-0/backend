@@ -11,6 +11,7 @@ import {
 import { planFileUpload } from "../middleware/upload.js";
 import { BadRequest, NotFound } from "../utils/errors.js";
 import { logger } from "../config/logger.js";
+import { env } from "../config/env.js";
 import { sendText } from "../services/evolution.service.js";
 import * as T from "../bot/personality/templates.js";
 import { logEventFromRequest, EventTypes } from "../services/events.service.js";
@@ -254,7 +255,7 @@ onboardingRoutes.post("/:userId/consent", async (req, res, next) => {
     const dest = user.wa_chat_id ?? user.phone_wa;
     if (dest) {
       try {
-        await sendText(dest, T.welcome(user.name), {
+        await sendText(dest, T.welcome(user.name, env.FORJA_MODE === "amateur"), {
           userId,
           category: "onboarding_welcome",
         });
