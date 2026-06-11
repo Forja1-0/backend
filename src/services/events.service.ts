@@ -56,6 +56,7 @@ export const EventTypes = {
   TRAINING_SKIPPED:      "training.skipped",
   TRAINING_QUERY:        "training.queried",
   TRAINING_DAY_SWAPPED:  "training.day_swapped",
+  TRAINING_OFF_PLAN:     "training.off_plan",
 
   // ── Checkin nocturno ─────────────────────────────────────────────
   CHECKIN_STARTED:       "checkin.started",
@@ -68,7 +69,8 @@ export const EventTypes = {
   WEIGHT_INVALID:        "weight.invalid",
 
   // ── Disruptions (legacy events table) ────────────────────────────
-  DISRUPTION_LOGGED:     "disruption.logged",
+  DISRUPTION_LOGGED:       "disruption.logged",
+  DISRUPTION_MEAL_COUNTED: "disruption.meal_counted",
 
   // ── Queries informativas ─────────────────────────────────────────
   QUERY_NUTRITION:       "query.nutrition",

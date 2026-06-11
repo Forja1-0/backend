@@ -13,6 +13,7 @@ export const aiNluIntentSchema = z.enum([
   "negation",
   "correction",
   "numeric",
+  "weight_log",
   "training_complete",
   "training_skip",
   "training_query",
@@ -50,9 +51,15 @@ export const aiMealItemSchema = z.object({
 
 export const aiInterpretationSchema = z.object({
   intent: aiNluIntentSchema,
-  // Poblado SOLO si intent='meal_log'. Para otros intents la AI puede
-  // devolver array vacio.
+  // Poblado si intent='meal_log' o si un desliz menciona comida/bebida
+  // concreta. Para otros intents la AI puede devolver array vacio.
   items: z.array(aiMealItemSchema).default([]),
+  // Solo para training_complete: qué entrenó, en las palabras del usuario
+  // ("brazos", "piernas", "corri 5k"). null si no lo nombró.
+  training_session: z.string().nullable().optional(),
+  // true solo si el usuario dice explicitamente que se salió del plan /
+  // rutina o hizo algo distinto a lo planificado.
+  off_plan: z.boolean().nullable().optional(),
 });
 
 export type AiNluIntent = z.infer<typeof aiNluIntentSchema>;

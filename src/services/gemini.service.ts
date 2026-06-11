@@ -77,6 +77,11 @@ const flashLite = genAI.getGenerativeModel({
             },
           },
         },
+        // Solo training_complete: qué entrenó, literal en palabras del user
+        // ("brazos", "corri 5k"). null si no nombró la sesión.
+        training_session: { type: SchemaType.STRING, nullable: true },
+        // true SOLO si dice explicitamente que se salió del plan/rutina.
+        off_plan: { type: SchemaType.BOOLEAN, nullable: true },
       },
       required: ["intent", "items"],
     },
@@ -118,10 +123,20 @@ function extractJsonObject(raw: string): unknown {
 function interpretPrompt(rawText: string): string {
   return `Mensaje WhatsApp de un atleta argentino: "${rawText}"
 
-Clasifica intent. Si reporta su PESO CORPORAL (ej: "peso 82", "me pesé 79.5", "81 kg"), intent = weight_log (sin items). Si es meal_log, separa en items:
+Clasifica intent. Sos un PARSER: extraes SOLO lo que el usuario dijo, no inventas ni completas con suposiciones.
+
+Si reporta su PESO CORPORAL (ej: "peso 82", "me pesé 79.5", "81 kg"), intent = weight_log (sin items).
+
+Si reporta un ENTRENAMIENTO HECHO (intent = training_complete):
+- training_session: la sesión/actividad/grupo muscular que nombró, EN SUS PALABRAS (ej: "brazos", "piernas", "corrí 5k", "natación"). null si no nombró nada concreto (ej: "ya entrené", "listo", "hice lo de hoy").
+- off_plan: true SOLO si dice explicitamente que se salió de su plan/rutina o hizo algo distinto a lo planificado.
+
+Si es meal_log, separa en items:
 - slug: ID de la receta si el plato compuesto esta en el enum.
 - food: nombre simple del alimento si no es receta del enum.
 - qty/unit/measure/state: solo si el usuario los dijo.
+
+Si es disruption_desliz (comió/tomó de más, se salió de la dieta) y menciona comida o bebida CONCRETA (ej: "una pizza entera", "6 birras"), separala TAMBIEN en items igual que meal_log.
 
 REGLA CRITICA: Si el usuario menciona un plato y una guarnición, o dos cosas separadas (ej: "fideos con tuco", "pollo con arroz"), DEBES separarlos en MULTIPLES items distintos en el array. NO mezcles dos alimentos en un solo item.`;
 }
@@ -157,12 +172,16 @@ export async function interpretMessage(
 
     // Limpieza: el SDK no soporta valores nullable + enum bien, asi que
     // mandamos "" como placeholder en los enums. Normalizamos a null.
-    if (typeof json === "object" && json !== null && Array.isArray((json as any).items)) {
-      for (const it of (json as any).items) {
-        for (const k of ["slug", "food", "unit", "measure", "state"]) {
-          if (it[k] === "") it[k] = null;
+    if (typeof json === "object" && json !== null) {
+      const obj = json as any;
+      if (Array.isArray(obj.items)) {
+        for (const it of obj.items) {
+          for (const k of ["slug", "food", "unit", "measure", "state"]) {
+            if (it[k] === "") it[k] = null;
+          }
         }
       }
+      if (obj.training_session === "") obj.training_session = null;
     }
 
     const parsed = aiInterpretationSchema.safeParse(json);

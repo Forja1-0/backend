@@ -6,7 +6,7 @@ import { logger } from "../config/logger.js";
 import { sendText } from "../services/evolution.service.js";
 import { logBotEvent, EventTypes } from "../services/events.service.js";
 import { interpretMessage } from "../services/gemini.service.js";
-import type { AiMealItem } from "../schemas/bot.schema.js";
+import type { AiInterpretation } from "../schemas/bot.schema.js";
 import { normalize } from "./parser/normalize.js";
 
 import { handleComplete, handleRpeResponse, handleSkip, handleQuery as handleTrainingQuery } from "./handlers/training.handler.js";
@@ -81,13 +81,15 @@ export async function routeMessage(user: User, rawText: string | null): Promise<
       jid,
       nlu_intent: nlu.intent,
       item_count: nlu.items.length,
+      training_session: nlu.training_session ?? null,
+      off_plan: nlu.off_plan ?? null,
     });
     await dispatchByIntent(
       user,
       rawText,
       normalize(rawText),
       nlu.intent as Intent,
-      nlu.items,
+      nlu,
     );
     return;
   }
@@ -197,9 +199,10 @@ async function dispatchByIntent(
   rawText: string,
   normalized: string,
   intent: Intent,
-  // Solo se setea cuando el dispatch viene del interpreter (rama 3 del router).
-  // El handler de meal_log lo consume; el resto lo ignora.
-  aiItems?: AiMealItem[],
+  // Solo se setea cuando el dispatch viene del interpreter (rama 3 del
+  // router). meal_log consume items; training_complete consume
+  // training_session/off_plan; desliz consume items. El resto lo ignora.
+  nlu?: AiInterpretation,
 ): Promise<void> {
   switch (intent) {
     case "command_help":   return handleHelp(user);
@@ -216,7 +219,14 @@ async function dispatchByIntent(
 
     case "weight_log":        return handleWeightLog(user, rawText);
 
-    case "training_complete": return handleComplete(user, normalized);
+    case "training_complete":
+      return handleComplete(
+        user,
+        normalized,
+        nlu
+          ? { sessionText: nlu.training_session ?? null, offPlan: nlu.off_plan ?? false }
+          : undefined,
+      );
     case "training_skip":     return handleSkip(user);
     case "training_query":    return handleTrainingQuery(user);
 
@@ -225,10 +235,10 @@ async function dispatchByIntent(
 
     case "disruption_injury":  return handleInjury(user, rawText);
     case "disruption_illness": return handleIllness(user, rawText);
-    case "disruption_desliz":  return handleDesliz(user, rawText);
+    case "disruption_desliz":  return handleDesliz(user, rawText, nlu?.items);
 
     case "meal_log": {
-      const handled = await handleMealLog(user, rawText, normalized, aiItems);
+      const handled = await handleMealLog(user, rawText, normalized, nlu?.items);
       if (!handled) await handleUnknown(user);
       return;
     }

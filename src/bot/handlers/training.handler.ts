@@ -5,41 +5,72 @@ import * as dailyRepo from "../../repositories/daily.repo.js";
 import { getSession, setSession, clearSession } from "../session.store.js";
 import { sendText } from "../../services/evolution.service.js";
 import * as T from "../personality/templates.js";
-import { extractStandaloneNumber } from "../parser/normalize.js";
+import { extractStandaloneNumber, normalize, tokenize } from "../parser/normalize.js";
 import { matchTraining } from "../parser/training-matcher.js";
 import { logger } from "../../config/logger.js";
 import { logBotEvent, EventTypes } from "../../services/events.service.js";
+
+/** Entidades que extrajo el interpreter (Gemini) para training_complete. */
+export interface AiTrainingHints {
+  /** Qué entrenó, en palabras del usuario ("brazos", "corri 5k"). */
+  sessionText: string | null;
+  /** El usuario dijo explicitamente que se salió del plan/rutina. */
+  offPlan: boolean;
+}
 
 /**
  * Procesa "completé X" / "terminé X" / "listo".
  * Graba el training_log y abre una sesion para capturar el RPE.
  *
+ * Orden de decision (la AI interpreta, el algoritmo decide, nadie inventa):
+ *   1. Matchear contra el plan lo que la AI extrajo (hints.sessionText).
+ *      Si la AI no extrajo nada, matchear el texto completo (rescate).
+ *   2. Sin match pero el usuario NOMBRÓ lo que hizo → registrar SUS palabras,
+ *      SIN plan_id (off-plan). Nunca atribuirselo a la sesion de hoy.
+ *   3. Sin match y sin nombre ("listo", "ya entrené") → ahi si, lo unico
+ *      razonable es asumir la sesion planificada de hoy.
+ *
  * El normalized viene del classifier, no del usuario crudo, por eso
  * los regex aca asumen acentos ya stripados.
  */
-export async function handleComplete(user: User, normalized: string): Promise<void> {
+export async function handleComplete(
+  user: User,
+  normalized: string,
+  hints?: AiTrainingHints,
+): Promise<void> {
   const jid = user.wa_chat_id!;
 
   const todayPlan = await trainingRepo.getTodayPlan(user.id, user.timezone);
   const todayDow = computeTodayDow(user.timezone);
 
-  // Intentamos matchear contra el plan completo del usuario (exercise/alias/session).
-  // Si el matcher engancha un dia distinto a hoy, lo registramos como swap.
-  let matchedPlanId: string | undefined = todayPlan?.id;
+  // ── 1. Match contra el plan ───────────────────────────────
+  // Si la AI extrajo la entidad, matcheamos SOLO eso: el texto completo mete
+  // ruido ("me sali de la RUTINA" podria enganchar una sesion "Rutina A").
+  const aiText = hints?.sessionText ? normalize(hints.sessionText) : null;
+  const match = aiText
+    ? await matchTraining(user.id, aiText, todayDow)
+    : await matchTraining(user.id, normalized, todayDow);
+
+  let matchedPlanId: string | undefined;
   let sessionName: string;
   let dayOffset = 0;
+  let offPlan = false;
 
-  const match = await matchTraining(user.id, normalized, todayDow);
   if (match) {
     matchedPlanId = match.plan_id;
     sessionName = match.session_name ?? match.session_type;
     dayOffset = match.day_offset;
   } else {
-    sessionName =
-      extractSessionName(normalized) ??
-      todayPlan?.session_name ??
-      todayPlan?.session_type ??
-      "Entrenamiento";
+    // ── 2. Sin match: ¿nombró lo que hizo? ──────────────────
+    const named = aiText ?? extractSessionName(normalized);
+    if (named && !isGenericSessionName(named)) {
+      sessionName = named.slice(0, 80);
+      offPlan = true; // sus palabras, sin plan_id — no inventamos
+    } else {
+      // ── 3. No nombró nada: asumimos la sesion de hoy ──────
+      sessionName = todayPlan?.session_name ?? todayPlan?.session_type ?? "Entrenamiento";
+      matchedPlanId = todayPlan?.id;
+    }
   }
 
   const log = await trainingRepo.logTrainingComplete(user, sessionName, matchedPlanId);
@@ -53,25 +84,41 @@ export async function handleComplete(user: User, normalized: string): Promise<vo
     matched: match != null,
     is_today: match?.is_today ?? null,
     day_offset: dayOffset,
+    off_plan: offPlan,
+    ai_session_text: hints?.sessionText ?? null,
   });
 
-  if (match && !match.is_today && todayPlan && todayPlan.session_type !== "descanso") {
+  const plannedToday =
+    todayPlan && todayPlan.session_type !== "descanso"
+      ? todayPlan.session_name ?? todayPlan.session_type
+      : null;
+
+  if (offPlan) {
+    logBotEvent(user.id, EventTypes.TRAINING_OFF_PLAN, {
+      done_session: sessionName,
+      planned_session: plannedToday,
+      explicit_off_plan: hints?.offPlan ?? false,
+    });
+    await sendText(jid, T.trainingOffPlan(sessionName, plannedToday), {
+      userId: user.id,
+      category: "training_off_plan",
+    });
+  } else if (match && !match.is_today && plannedToday) {
     logBotEvent(user.id, EventTypes.TRAINING_DAY_SWAPPED, {
       done_session: sessionName,
-      planned_session: todayPlan.session_name ?? todayPlan.session_type,
+      planned_session: plannedToday,
     });
-    await sendText(
-      jid,
-      T.trainingDaySwapped(sessionName, todayPlan.session_name ?? todayPlan.session_type),
-      { userId: user.id, category: "training_day_swapped" },
-    );
+    await sendText(jid, T.trainingDaySwapped(sessionName, plannedToday), {
+      userId: user.id,
+      category: "training_day_swapped",
+    });
   } else {
     await sendText(jid, T.trainingComplete(sessionName), {
       userId: user.id,
       category: "training_complete",
     });
   }
-  logger.debug("training match", { userId: user.id, match, dayOffset });
+  logger.debug("training match", { userId: user.id, match, dayOffset, offPlan });
 }
 
 /**
@@ -170,13 +217,14 @@ export async function handleQuery(user: User): Promise<void> {
 // ──────────────────────────────────────────────────────────
 // Extrae el nombre de la sesion del texto.
 // "complete piernas" → "piernas"
-// "complete piernas hoy" → "piernas" (corta en stopword)
-// "listo el gym a full" → "el gym"
+// "entrene brazos completo" → "brazos" (corta en stopword)
+// "hoy hice espalda" → "espalda" (tolera prefijo temporal)
+// "listo el gym a full" → "gym" (genérico → el caller asume plan de hoy)
 // ──────────────────────────────────────────────────────────
-const VERB_PREFIX = /^(?:complet[ae]|terminado|terminada|terminamos|termin[ae]|finalice|finalizado|acab[eo]|ya termine|ya hice|ya entrene|hecho|cerrado|listo(?:\s+el|\s+la)?|hice|hicimos)\s+/;
-const STOPWORD_BOUNDARY = /\b(?:hoy|ayer|recien|al fin|por fin|a full|durisimo|durisima|tremendo|tremenda|completo|completa|enterito|enterita|y |con |en el|en la)\b/;
+const VERB_PREFIX = /^(?:hoy |ayer |recien |ya )?(?:complet[ae]|terminado|terminada|terminamos|termin[ae]|finalice|finalizado|acab[eo]|entrenamos|entrene|hecho|cerrado|listo(?:\s+el|\s+la)?|hice|hicimos)\s+/;
+const STOPWORD_BOUNDARY = /\b(?:hoy|ayer|recien|al fin|por fin|a full|durisimo|durisima|tremendo|tremenda|completo|completa|enterito|enterita|y |con |en el|en la|me sali|me fui)\b/;
 
-function extractSessionName(normalized: string): string | null {
+export function extractSessionName(normalized: string): string | null {
   const m = normalized.match(VERB_PREFIX);
   if (!m) return null;
   const rest = normalized.slice(m[0].length).trim();
@@ -184,4 +232,17 @@ function extractSessionName(normalized: string): string | null {
   const cutoff = rest.search(STOPWORD_BOUNDARY);
   const clean = cutoff > 0 ? rest.slice(0, cutoff).trim() : rest;
   return clean.length > 0 ? clean.slice(0, 80) : null;
+}
+
+// Palabras que no nombran una sesion concreta ("hice lo de hoy", "termine el
+// entrenamiento"). Si lo "nombrado" es solo esto, NO es off-plan: el usuario
+// se refiere a la sesion planificada.
+const GENERIC_SESSION_TOKENS = new Set([
+  "lo", "la", "el", "de", "del", "mi", "todo", "toda", "hoy", "dia",
+  "entrenamiento", "entreno", "rutina", "sesion", "plan", "gym", "gimnasio",
+]);
+
+export function isGenericSessionName(name: string): boolean {
+  const toks = tokenize(normalize(name));
+  return toks.length === 0 || toks.every((t) => GENERIC_SESSION_TOKENS.has(t));
 }

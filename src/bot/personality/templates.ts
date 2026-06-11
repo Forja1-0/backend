@@ -243,6 +243,22 @@ export function trainingDaySwapped(doneSession: string, todayPlanSession: string
   );
 }
 
+/**
+ * El usuario reportó una sesion que NO está en su plan ("entrené brazos" sin
+ * dia de brazos en el plan). Registramos SUS palabras como entreno extra —
+ * nunca se lo atribuimos a la sesion planificada de hoy.
+ */
+export function trainingOffPlan(doneSession: string, todayPlanSession: string | null): string {
+  const plannedLine = todayPlanSession
+    ? `_Eso no estaba en tu plan — hoy tenías *${todayPlanSession}*. Lo registro como entreno extra; si encima hacés lo del plan, avisame._\n\n`
+    : `_No lo tenía en tu plan, lo registro igual._\n\n`;
+  return (
+    `🔥 *${doneSession}* registrado.\n\n` +
+    plannedLine +
+    `¿Qué tan duro fue? Mandame un número del *1 al 10*.`
+  );
+}
+
 export function trainingNeedsNumber(): string {
   return "Mandame un número entre *1 y 10* para el esfuerzo (RPE).";
 }
@@ -702,6 +718,14 @@ export function disruptionDeslizAck(): string {
     "Anotado. La consistencia se mide en semanas, no en cenas.",
     "Está. Mañana retomamos. No es drama.",
   ]);
+}
+
+/**
+ * Sufijo cuando el desliz traía comida/bebida concreta y la pudimos sumar
+ * al día como estimación. El registro honesto vale más que el reto.
+ */
+export function deslizMealCounted(kcal: number): string {
+  return `_Lo sumé igual al día (~${Math.round(kcal)} kcal estimadas) — el registro real es lo que te sirve._`;
 }
 
 // ════════════════════════════════════════════════════════════

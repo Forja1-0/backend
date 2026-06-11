@@ -1,4 +1,5 @@
 import type { User } from "../../types/user.types.js";
+import type { AiMealItem } from "../../schemas/bot.schema.js";
 import { env } from "../../config/env.js";
 import { parseMeal, applyStateChoice, applyFoodChoice, buildItem, type ParseResult, type ClarifyEntry } from "../parser/meal-parser.js";
 import * as mealRepo from "../../repositories/meal.repo.js";
@@ -38,7 +39,7 @@ export async function handleMealLog(
   user: User,
   rawText: string,
   normalized: string,
-  aiItems?: import("../../schemas/bot.schema.js").AiMealItem[],
+  aiItems?: AiMealItem[],
 ): Promise<boolean> {
   const jid = user.wa_chat_id!;
 
@@ -168,6 +169,66 @@ export async function handleMealLog(
     category: "meal_confirm_ask",
   });
   return true;
+}
+
+/**
+ * Registro best-effort de comida desde items ya interpretados por la AI.
+ * Lo usa el handler de desliz: un desliz con comida concreta ("una pizza
+ * entera") debe sumar al día, sino el daily miente.
+ *
+ * NUNCA abre flujos de aclaración ni manda mensajes:
+ *   - crudo/cocido ambiguo → asume cocido (lo más frecuente al reportar).
+ *   - alimento ambiguo contra la DB / nada resuelto → null, no guarda nada.
+ * Cualquier error devuelve null — el desliz ya quedó registrado igual.
+ */
+export async function logMealBestEffort(
+  user: User,
+  rawText: string,
+  aiItems: AiMealItem[],
+): Promise<{ kcal: number; itemCount: number } | null> {
+  try {
+    const result = await parseMeal(user.id, normalize(rawText), rawText, {
+      aiItems,
+      skipClarification: true,
+    });
+
+    let items = result.items;
+    let totals = result.totals;
+
+    if (result.source === "needs_state_clarification" && result.state_clarify) {
+      ({ items, totals } = await applyStateChoice(result.items, result.state_clarify, "cocido"));
+    } else if (
+      result.source === "none" ||
+      result.source === "needs_clarification" ||
+      result.source === "needs_food_clarification" ||
+      result.items.length === 0
+    ) {
+      return null;
+    }
+
+    await persistMeal(user, rawText, {
+      items,
+      totals,
+      is_estimate: true, // siempre estimación: vino de un desliz, no de un reporte preciso
+      confidence: result.confidence,
+      source: result.source === "needs_state_clarification" ? "ai" : result.source,
+    });
+    logBotEvent(user.id, EventTypes.MEAL_LOGGED, {
+      source: "ai",
+      via_desliz: true,
+      auto_saved: true,
+      is_estimate: true,
+      kcal: totals.kcal,
+      protein_g: totals.protein,
+      carbs_g: totals.carbs,
+      fat_g: totals.fat,
+      item_count: items.length,
+    });
+    return { kcal: totals.kcal, itemCount: items.length };
+  } catch (err) {
+    logger.error("logMealBestEffort failed", { err, userId: user.id, rawText });
+    return null;
+  }
 }
 
 /**
