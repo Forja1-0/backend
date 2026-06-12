@@ -67,10 +67,22 @@ export interface FoodClarifyEntry {
 
 const store = new Map<string, SessionState>();
 
-const TTL_MS = 10 * 60 * 1000;
+const DEFAULT_TTL_MS = 10 * 60 * 1000;
+
+// Flujos iniciados por cron: el usuario contesta cuando ve el mensaje, no en
+// el momento. Con el TTL corto, un "no" media hora despues del check-in caia
+// al fallback generico ("se me escapo...") porque la sesion ya habia expirado.
+const CRON_FLOW_TTL_MS = 3 * 60 * 60 * 1000;
+const FLOW_TTL_MS: Partial<Record<SessionState["flow"], number>> = {
+  checkin_nutrition: CRON_FLOW_TTL_MS,
+  checkin_sleep: CRON_FLOW_TTL_MS,
+  checkin_pain: CRON_FLOW_TTL_MS,
+  weight_capture: CRON_FLOW_TTL_MS,
+};
+
 const expirations = new Map<string, ReturnType<typeof setTimeout>>();
 
-function resetTtl(jid: string) {
+function resetTtl(jid: string, flow: SessionState["flow"]) {
   const prev = expirations.get(jid);
   if (prev) clearTimeout(prev);
   expirations.set(
@@ -78,7 +90,7 @@ function resetTtl(jid: string) {
     setTimeout(() => {
       store.delete(jid);
       expirations.delete(jid);
-    }, TTL_MS),
+    }, FLOW_TTL_MS[flow] ?? DEFAULT_TTL_MS),
   );
 }
 
@@ -88,7 +100,7 @@ export function getSession(jid: string): SessionState | null {
 
 export function setSession(jid: string, state: SessionState): void {
   store.set(jid, state);
-  resetTtl(jid);
+  resetTtl(jid, state.flow);
 }
 
 export function clearSession(jid: string): void {

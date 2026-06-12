@@ -12,9 +12,15 @@ import { canUseAiNlu, recordAiNluUse } from "./ai-budget.service.js";
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 
 // Modelo "creativo" para el resumen nocturno (varia cada dia).
+// thinkingBudget 0: 2.5-flash piensa por defecto y el thinking consume el
+// mismo maxOutputTokens → mensajes cortados a mitad de frase.
 const flashWarm = genAI.getGenerativeModel({
   model: "gemini-2.5-flash",
-  generationConfig: { temperature: 0.9, maxOutputTokens: 600 },
+  generationConfig: {
+    temperature: 0.9,
+    maxOutputTokens: 600,
+    ...({ thinkingConfig: { thinkingBudget: 0 } } as object),
+  },
 });
 
 // Modelo barato para parser de plan one-shot (no afecta cost del runtime).
@@ -454,7 +460,9 @@ Mensaje:`;
   try {
     const r = await flashWarm.generateContent(prompt);
     const text = r.response.text().trim();
-    if (text) return text;
+    // MAX_TOKENS = salida cortada a mitad de frase; mejor el fallback.
+    if (text && r.response.candidates?.[0]?.finishReason !== "MAX_TOKENS") return text;
+    logger.warn("gemini motivation nudge truncated/empty", { kind: d.kind });
   } catch (err) {
     logger.error("gemini motivation nudge failed", { err, kind: d.kind });
   }
@@ -517,10 +525,13 @@ Mensaje:`;
 
   try {
     const r = await flashWarm.generateContent(prompt);
-    return r.response.text().trim();
+    const text = r.response.text().trim();
+    // MAX_TOKENS = salida cortada a mitad de frase; mejor el fallback.
+    if (text && r.response.candidates?.[0]?.finishReason !== "MAX_TOKENS") return text;
+    logger.warn("gemini nightly summary truncated/empty");
   } catch (err) {
     logger.error("gemini nightly summary failed", { err });
-    const goalSuffix = goalLine ? ` Tu meta sigue ahi.` : "";
-    return `Cerramos el día, ${firstName}. ${score != null ? `Score ${score}/100. ` : ""}Mañana seguimos.${goalSuffix} 💪`;
   }
+  const goalSuffix = goalLine ? ` Tu meta sigue ahi.` : "";
+  return `Cerramos el día, ${firstName}. ${score != null ? `Score ${score}/100. ` : ""}Mañana seguimos.${goalSuffix} 💪`;
 }
