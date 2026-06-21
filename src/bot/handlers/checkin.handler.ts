@@ -18,7 +18,7 @@ export interface CheckinUser {
 
 /**
  * Arranca el checkin nocturno con un usuario.
- * Llamado por el cron 21:00.
+ * Llamado por el cron 22:30.
  */
 export async function startCheckin(user: CheckinUser): Promise<void> {
   setSession(user.wa_chat_id, { flow: "checkin_nutrition", step: 1 });

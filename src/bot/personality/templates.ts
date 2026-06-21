@@ -670,7 +670,7 @@ export function checkinStart(name: string | null, amateur = false): string {
   const q = amateur
     ? "¿Comiste como te propusiste hoy? Sin vueltas. (*sí* / *no*)"
     : "¿Cumpliste con la nutrición hoy? (*sí* / *no*)";
-  return `🌙 *Cierre del día${n ? ", " + n : ""}.*\n\n${q}`;
+  return `🌙 *Registro del día${n ? ", " + n : ""}.*\n\n${q}`;
 }
 
 export function checkinAskSleep(prevOk: boolean): string {

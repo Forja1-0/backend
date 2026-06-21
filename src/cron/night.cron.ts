@@ -7,7 +7,9 @@ import { logBotEvent, EventTypes } from "../services/events.service.js";
  * Check-in nocturno. Solo manda a usuarios que NO hayan respondido hoy
  * (la query getCheckinCandidates ya filtra por daily_summaries faltante).
  *
- * Programado: 21:00 ART todos los dias.
+ * Programado: 22:30 ART todos los dias. NO cierra ni bloquea el dia: el dia
+ * sigue siendo el calendario (00:00-23:59) y se puede seguir registrando
+ * despues. Esto es solo el prompt de registro diario.
  */
 export async function runNightCheckin(): Promise<void> {
   logger.info("cron night checkin: starting");

@@ -31,10 +31,14 @@ export function registerCronJobs(): void {
     { timezone: "America/Argentina/Buenos_Aires" },
   );
 
-  // Check-in nocturno: todos los días a las 21:00
-  // Cron: "0 21 * * *"
+  // Registro nocturno del día: todos los días a las 22:30.
+  // NO es un "cierre" que bloquee el día — el día sigue siendo el día
+  // calendario (00:00–23:59) y se puede seguir cargando comidas/entrenos
+  // después de esta hora (van a CURRENT_DATE igual). Es solo el prompt de
+  // registro diario.
+  // Cron: "30 22 * * *"
   cron.schedule(
-    "0 21 * * *",
+    "30 22 * * *",
     () => {
       runNightCheckin().catch((err) =>
         logger.error("cron night uncaught", { err }),
@@ -91,5 +95,5 @@ export function registerCronJobs(): void {
     logger.info("cron: motivation engine registered (tick */5, planner Mon 00:30 ART)");
   }
 
-  logger.info("cron: jobs registered (morning 06:00, night 21:00, weight Sun 10:00, reminders */1 ART)");
+  logger.info("cron: jobs registered (morning 06:00, night 22:30, weight Sun 10:00, reminders */1 ART)");
 }
