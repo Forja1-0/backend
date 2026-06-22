@@ -158,8 +158,8 @@ export function help(name: string | null, amateur = false): string {
     `   Ajusto el plan o suspendo recordatorios.\n\n` +
     `━━━━━━━━━━━━━━━\n` +
     `🔔 *LO QUE HAGO SOLO*\n\n` +
-    `• *Recordatorio matutino* (lun a sáb, 6 AM) con la sesión del día — *no me tenés que avisar cuándo entrenás, ya lo sé*\n` +
-    `• *Check-in nocturno* — nutrición, sueño, dolor\n` +
+    `• *Inicio del día* (todos los días, 6 AM): qué te toca hoy + *¿cómo dormiste?* (1-10)\n` +
+    `• *Registro nocturno* (22:30) — nutrición y dolor\n` +
     `• *Resumen semanal* los domingos\n` +
     `• Respeto los protocolos de rehab y alertas que cargó tu coach\n\n` +
     `━━━━━━━━━━━━━━━\n` +
@@ -197,8 +197,8 @@ export function welcome(name: string | null, amateur = false): string {
     `Soy *Forja*. Desde acá entrenamos juntos todos los días.\n\n` +
     `🧠 *Ya tengo todo:* tu objetivo, tu plan de entrenos con horarios, tus targets de kcal/macros, tus restricciones y tus comidas frecuentes. No tenés que recargar nada.\n\n` +
     `🔔 *Yo me encargo de avisarte:*\n` +
-    `• Cada mañana (lun a sáb, 6 AM) te paso qué te toca y a qué hora\n` +
-    `• A la noche te hago un check-in rápido (nutri, sueño, dolor)\n` +
+    `• Cada mañana (6 AM) te paso qué te toca y te pregunto cómo dormiste (1-10)\n` +
+    `• A la noche (22:30) un registro rápido (nutri, dolor)\n` +
     `• Los domingos, resumen semanal\n\n` +
     `💬 *Vos me hablás natural cuando pase algo:*\n` +
     `_"comí 200g de pollo"_ → registro macros\n` +
@@ -673,13 +673,23 @@ export function checkinStart(name: string | null, amateur = false): string {
   return `🌙 *Registro del día${n ? ", " + n : ""}.*\n\n${q}`;
 }
 
-export function checkinAskSleep(prevOk: boolean): string {
-  const intro = prevOk ? "✅ Joya." : "Anotado. Mañana arrancamos limpios.";
-  return `${intro}\n\n¿Cómo dormiste? Del *1 al 5* (1 = pésimo, 5 = perfecto).`;
+/**
+ * Pregunta de sueño del flujo MATUTINO (va junto al "inicio del día"). El sueño
+ * ya no se pregunta a la noche: apenas te levantás registrás cómo dormiste.
+ */
+export function morningAskSleep(): string {
+  return "Antes de arrancar: ¿cómo dormiste anoche? Del *1 al 10* (1 = pésimo, 10 = perfecto).";
 }
 
-export function checkinAskPain(): string {
-  return "Última: ¿dolor o molestia hoy? Del *0 al 10* (0 = nada, 10 = muy fuerte).";
+export function morningSleepSaved(sleep: number): string {
+  if (sleep <= 3) return "Anotado. Día corto de descanso — cuidá la carga hoy. 💪";
+  if (sleep >= 8) return "Joya, descanso de campeón. A romperla. 💪";
+  return "Anotado. A darle al día. 💪";
+}
+
+export function checkinAskPain(prevOk: boolean): string {
+  const intro = prevOk ? "✅ Joya." : "Anotado. Mañana arrancamos limpios.";
+  return `${intro}\n\nÚltima: ¿dolor o molestia hoy? Del *0 al 10* (0 = nada, 10 = muy fuerte).`;
 }
 
 export function checkinNeedYesNo(): string {

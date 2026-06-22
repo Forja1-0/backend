@@ -352,7 +352,8 @@ export interface NightlySummaryGoal {
 export interface NightlySummaryInput {
   name: string | null;
   nutrition_ok: boolean;
-  sleep: number;
+  /** Sueño 1-10 cargado a la mañana. null si no lo registró ese día. */
+  sleep: number | null;
   pain: number;
   summary: DailySummaryRow;
   /** Goal activo del usuario. Null = sin meta (elite legacy). */
@@ -489,7 +490,7 @@ export async function generateNightlySummary(d: NightlySummaryInput): Promise<st
     `nombre: ${firstName}`,
     goalLine,
     `cumplio plan nutricional: ${d.nutrition_ok ? "si" : "no"}`,
-    `sueno (1-5): ${d.sleep}`,
+    d.sleep != null ? `sueno (1-10): ${d.sleep}` : `sueno: sin registro hoy`,
     `dolor (0-10): ${d.pain}`,
     kcal ? `kcal consumidas: ${kcal}` : "kcal: sin registros",
     kcalAdh != null ? `adherencia kcal: ${Math.round(kcalAdh)}%` : null,
@@ -513,7 +514,7 @@ Devolveme UN mensaje de cierre nocturno para mandarle por WhatsApp. Reglas:
 - Mencionar 1 o 2 metricas concretas que importen hoy (no listar todo).
 ${goalRule}
 - Si hubo dolor >= 7, sugerir consulta con kine/medico.
-- Si durmio mal (<=2), priorizar descanso por sobre rendimiento.
+- Si durmio mal (sueno <=4 sobre 10), priorizar descanso por sobre rendimiento.
 - Si no entreno y no comio bien, sin reto: alentar a manana.
 - Si score >= 80, celebrar pero sin exagerar.
 - Cerrar con una frase corta de aliento o conexion.

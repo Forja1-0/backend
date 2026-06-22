@@ -10,7 +10,7 @@ import type { AiInterpretation } from "../schemas/bot.schema.js";
 import { normalize } from "./parser/normalize.js";
 
 import { handleComplete, handleRpeResponse, handleSkip, handleQuery as handleTrainingQuery } from "./handlers/training.handler.js";
-import { handleCheckinResponse } from "./handlers/checkin.handler.js";
+import { handleCheckinResponse, handleMorningSleepResponse } from "./handlers/checkin.handler.js";
 import { handleMealLog, handleMealConfirm, handleMealClarify, handleMealStateClarify, handleMealFoodClarify, handleMealCorrection } from "./handlers/meal.handler.js";
 import { handleWeightLog, handleWeightCapture } from "./handlers/weight.handler.js";
 import { handleNutritionQuery, handleProgressQuery } from "./handlers/query.handler.js";
@@ -155,8 +155,17 @@ async function dispatchSession(
     case "rpe_capture":
       await handleRpeResponse(user, rawText);
       return true;
+    case "morning_sleep":
+      return await handleMorningSleepResponse(
+        {
+          id: user.id,
+          name: user.name,
+          wa_chat_id: user.wa_chat_id!,
+          timezone: user.timezone,
+        },
+        rawText,
+      );
     case "checkin_nutrition":
-    case "checkin_sleep":
     case "checkin_pain":
       return await handleCheckinResponse(
         {

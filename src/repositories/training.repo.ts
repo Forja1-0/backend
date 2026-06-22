@@ -129,3 +129,38 @@ export async function getAllUsersWithTodayTraining(): Promise<
   );
   return rows as any;
 }
+
+/**
+ * TODOS los usuarios activos y onboardeados (con wa_chat_id) para el mensaje de
+ * "inicio del día" — con su sesión de hoy si la tienen (LEFT JOIN: en día de
+ * descanso session_type queda null). Distinto de getAllUsersWithTodayTraining
+ * (que solo trae a quien entrena hoy): la mañana va para todos porque ahí se
+ * registra el sueño, entrenen o no.
+ */
+export async function getActiveUsersForMorning(): Promise<
+  {
+    user_id: string;
+    wa_chat_id: string;
+    name: string | null;
+    session_type: string | null;
+    session_name: string | null;
+    approx_time: string | null;
+    duration_min: number | null;
+  }[]
+> {
+  const { rows } = await query(
+    `SELECT DISTINCT ON (u.id)
+            u.id AS user_id, u.wa_chat_id, u.name,
+            tp.session_type, tp.session_name, tp.approx_time, tp.duration_min
+     FROM users u
+     LEFT JOIN training_plans tp
+       ON tp.user_id = u.id
+      AND tp.is_active = true
+      AND tp.day_of_week = EXTRACT(DOW FROM NOW() AT TIME ZONE u.timezone)::INT
+     WHERE u.active = true
+       AND u.wa_chat_id IS NOT NULL
+       AND u.onboarding_step >= 7
+     ORDER BY u.id, tp.session_type NULLS LAST`,
+  );
+  return rows as any;
+}

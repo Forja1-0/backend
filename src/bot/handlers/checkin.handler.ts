@@ -30,7 +30,50 @@ export async function startCheckin(user: CheckinUser): Promise<void> {
 }
 
 /**
- * Procesa respuestas al flujo de checkin (3 pasos).
+ * Procesa la respuesta de sueño del flujo MATUTINO. El cron de la mañana ya
+ * mandó el "inicio del día" + la pregunta y dejó abierta la sesión
+ * `morning_sleep`. Acá parseamos el 1-10, lo persistimos (entra al score) y
+ * cerramos.
+ *
+ * Best-effort: si el usuario contesta otra cosa (ej: carga el desayuno en vez
+ * de un número), NO secuestramos el mensaje — soltamos la sesión y devolvemos
+ * false para que el router lo procese normal. El sueño de hoy queda sin cargar.
+ */
+export async function handleMorningSleepResponse(
+  user: CheckinUser,
+  text: string,
+): Promise<boolean> {
+  const jid = user.wa_chat_id;
+  const normalized = text.trim().toLowerCase();
+  const sleep = parseInt(normalized, 10);
+
+  if (isNaN(sleep) || sleep < 1 || sleep > 10) {
+    // No es un número de sueño: el user está haciendo otra cosa. Liberamos.
+    clearSession(jid);
+    logBotEvent(user.id, EventTypes.MORNING_SLEEP_SKIPPED, { raw: normalized });
+    return false;
+  }
+
+  clearSession(jid);
+
+  try {
+    await dailyRepo.setSleep(user.id, sleep);
+  } catch (err) {
+    logger.error("morning sleep save failed", { err, userId: user.id });
+    logBotEvent(user.id, "morning.sleep_save_failed", { error: String(err) });
+    // No bloqueamos al usuario por un fallo de guardado: igual cerramos amable.
+  }
+
+  logBotEvent(user.id, EventTypes.MORNING_SLEEP_LOGGED, { sleep });
+  await sendText(jid, T.morningSleepSaved(sleep), {
+    userId: user.id,
+    category: "morning_sleep_saved",
+  });
+  return true;
+}
+
+/**
+ * Procesa respuestas al flujo de registro nocturno (nutrición → dolor).
  * Devuelve true si consumio el mensaje.
  */
 export async function handleCheckinResponse(
@@ -54,33 +97,10 @@ export async function handleCheckinResponse(
       });
       return true;
     }
-    setSession(jid, { flow: "checkin_sleep", step: 2, nutrition_ok: ok });
+    // El sueño ya no se pregunta acá: se carga a la mañana. Vamos directo a dolor.
+    setSession(jid, { flow: "checkin_pain", step: 2, nutrition_ok: ok });
     logBotEvent(user.id, EventTypes.CHECKIN_STEP, { step: "nutrition", nutrition_ok: ok });
-    await sendText(jid, T.checkinAskSleep(ok), {
-      userId: user.id,
-      category: "checkin_ask_sleep",
-    });
-    return true;
-  }
-
-  if (session.flow === "checkin_sleep") {
-    const sleep = parseInt(normalized, 10);
-    if (isNaN(sleep) || sleep < 1 || sleep > 5) {
-      logBotEvent(user.id, EventTypes.CHECKIN_VALIDATION_FAIL, { step: "sleep", raw: normalized });
-      await sendText(jid, T.checkinNeedNumberRange(1, 5), {
-        userId: user.id,
-        category: "checkin_need_number",
-      });
-      return true;
-    }
-    setSession(jid, {
-      flow: "checkin_pain",
-      step: 3,
-      nutrition_ok: session.nutrition_ok,
-      sleep,
-    });
-    logBotEvent(user.id, EventTypes.CHECKIN_STEP, { step: "sleep", sleep });
-    await sendText(jid, T.checkinAskPain(), {
+    await sendText(jid, T.checkinAskPain(ok), {
       userId: user.id,
       category: "checkin_ask_pain",
     });
@@ -99,11 +119,18 @@ export async function handleCheckinResponse(
     }
     clearSession(jid);
 
+    // Sueño cargado esta mañana (null si no respondió el "inicio del día").
+    let sleep: number | null = null;
+    try {
+      sleep = await dailyRepo.getSleepToday(user.id);
+    } catch (err) {
+      logger.warn("nightly sleep lookup failed", { err, userId: user.id });
+    }
+
     let summary: Awaited<ReturnType<typeof dailyRepo.upsertDailySummary>>;
     try {
       summary = await dailyRepo.upsertDailySummary(user.id, {
         nutrition_ok: session.nutrition_ok,
-        sleep: session.sleep,
         pain,
       });
     } catch (err) {
@@ -118,7 +145,7 @@ export async function handleCheckinResponse(
 
     logBotEvent(user.id, EventTypes.CHECKIN_COMPLETED, {
       nutrition_ok: session.nutrition_ok,
-      sleep: session.sleep,
+      sleep,
       pain,
       performance_score: summary.performance_score ?? null,
     });
@@ -137,7 +164,7 @@ export async function handleCheckinResponse(
       const message = await generateNightlySummary({
         name: user.name,
         nutrition_ok: session.nutrition_ok,
-        sleep: session.sleep,
+        sleep,
         pain,
         summary,
         goal,

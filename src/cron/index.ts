@@ -19,10 +19,12 @@ export function registerCronJobs(): void {
     return;
   }
 
-  // Recordatorio matutino: lunes a sábado a las 06:00
-  // Cron: "0 6 * * 1-6"
+  // Inicio del día: todos los días a las 06:00. Manda qué te toca hoy y
+  // pregunta cómo dormiste (1-10) — va a todos, entrenen o no, porque el
+  // sueño se registra acá.
+  // Cron: "0 6 * * *"
   cron.schedule(
-    "0 6 * * 1-6",
+    "0 6 * * *",
     () => {
       runMorningReminder().catch((err) =>
         logger.error("cron morning uncaught", { err }),
@@ -95,5 +97,5 @@ export function registerCronJobs(): void {
     logger.info("cron: motivation engine registered (tick */5, planner Mon 00:30 ART)");
   }
 
-  logger.info("cron: jobs registered (morning 06:00, night 22:30, weight Sun 10:00, reminders */1 ART)");
+  logger.info("cron: jobs registered (morning 06:00 daily, night 22:30, weight Sun 10:00, reminders */1 ART)");
 }

@@ -96,7 +96,7 @@ export async function getOverview(userId: string) {
     ),
     query(
       `SELECT summary_date, total_kcal, total_protein_g, total_carbs_g, total_fat_g,
-              kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, performance_score
+              kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, sleep, performance_score
        FROM daily_summaries WHERE user_id = $1
        ORDER BY summary_date DESC LIMIT 30`,
       [userId],

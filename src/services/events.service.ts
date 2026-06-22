@@ -58,11 +58,15 @@ export const EventTypes = {
   TRAINING_DAY_SWAPPED:  "training.day_swapped",
   TRAINING_OFF_PLAN:     "training.off_plan",
 
-  // ── Checkin nocturno ─────────────────────────────────────────────
+  // ── Registro nocturno (nutrición + dolor) ────────────────────────
   CHECKIN_STARTED:       "checkin.started",
   CHECKIN_STEP:          "checkin.step_answered",
   CHECKIN_COMPLETED:     "checkin.completed",
   CHECKIN_VALIDATION_FAIL:"checkin.validation_failed",
+
+  // ── Registro matutino (sueño) ────────────────────────────────────
+  MORNING_SLEEP_LOGGED:  "morning.sleep_logged",
+  MORNING_SLEEP_SKIPPED: "morning.sleep_skipped",
 
   // ── Peso corporal (modo amateur) ─────────────────────────────────
   WEIGHT_LOGGED:         "weight.logged",

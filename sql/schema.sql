@@ -345,6 +345,7 @@ CREATE TABLE daily_summaries (
     protein_adherence_pct   REAL,
     training_completed      BOOLEAN,
     training_rpe            INT,
+    sleep                   INT CHECK (sleep BETWEEN 1 AND 10),
     performance_score       INT CHECK (performance_score BETWEEN 0 AND 100),
     alert_sent              BOOLEAN NOT NULL DEFAULT false,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -406,7 +407,9 @@ CREATE TRIGGER trg_users_updated
 
 -- ============================================================
 -- FUNCIÓN: Calcular Performance Score del día
--- Fórmula: (nutrición_adherence * 0.5) + (entrenamiento * 0.35) + (no_desliz * 0.15)
+-- Con sueño cargado:  (nutrición * 0.40) + (entreno * 0.30) + (sueño * 0.15) + (no_desliz * 0.15)
+-- Sin sueño (NULL):   (nutrición * 0.50) + (entreno * 0.35) + (no_desliz * 0.15)  [histórica]
+-- El sueño 1-10 se normaliza a 0-100 (sleep*10). NULL no penaliza.
 -- ============================================================
 CREATE OR REPLACE FUNCTION calculate_performance_score(
     p_user_id UUID,
@@ -417,26 +420,24 @@ DECLARE
     v_protein_pct REAL;
     v_training_done BOOLEAN;
     v_had_desliz BOOLEAN;
+    v_sleep INT;
     v_nutrition_score REAL;
     v_training_score REAL;
     v_desliz_score REAL;
+    v_sleep_score REAL;
 BEGIN
-    -- Nutrición: promedio de adherencia kcal y proteína
-    SELECT kcal_adherence_pct, protein_adherence_pct
-    INTO v_kcal_pct, v_protein_pct
+    -- Nutrición + entreno + sueño del día (todo vive en daily_summaries)
+    SELECT kcal_adherence_pct, protein_adherence_pct, training_completed, sleep
+    INTO v_kcal_pct, v_protein_pct, v_training_done, v_sleep
     FROM daily_summaries
     WHERE user_id = p_user_id AND summary_date = p_date;
 
     IF v_kcal_pct IS NULL THEN RETURN NULL; END IF;
 
-    -- Cap at 100%
+    -- Nutrición: promedio de adherencia kcal y proteína, cap 100%
     v_nutrition_score := LEAST(((COALESCE(v_kcal_pct, 0) + COALESCE(v_protein_pct, 0)) / 2.0), 100);
 
     -- Entrenamiento: ¿completó la sesión del día?
-    SELECT training_completed INTO v_training_done
-    FROM daily_summaries
-    WHERE user_id = p_user_id AND summary_date = p_date;
-
     v_training_score := CASE WHEN v_training_done = true THEN 100 ELSE 0 END;
 
     -- Desliz: ¿hubo desliz ese día?
@@ -446,14 +447,24 @@ BEGIN
           AND event_type = 'desliz'
           AND occurred_at::date = p_date
     ) INTO v_had_desliz;
-
     v_desliz_score := CASE WHEN v_had_desliz THEN 0 ELSE 100 END;
 
-    -- Fórmula ponderada
+    IF v_sleep IS NOT NULL THEN
+        -- Sueño 1-10 -> 0-100
+        v_sleep_score := LEAST(v_sleep * 10, 100);
+        RETURN ROUND(
+            (v_nutrition_score * 0.40) +
+            (v_training_score  * 0.30) +
+            (v_sleep_score     * 0.15) +
+            (v_desliz_score    * 0.15)
+        )::INT;
+    END IF;
+
+    -- Sin sueño cargado: fórmula histórica
     RETURN ROUND(
         (v_nutrition_score * 0.50) +
-        (v_training_score * 0.35) +
-        (v_desliz_score * 0.15)
+        (v_training_score  * 0.35) +
+        (v_desliz_score    * 0.15)
     )::INT;
 END;
 $$ LANGUAGE plpgsql;

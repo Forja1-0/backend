@@ -33,9 +33,9 @@ export interface MealStateClarify {
 
 export type SessionState =
   | { flow: "rpe_capture"; training_log_id: string }
+  | { flow: "morning_sleep"; step: 1 }
   | { flow: "checkin_nutrition"; step: 1 }
-  | { flow: "checkin_sleep"; step: 2; nutrition_ok: boolean }
-  | { flow: "checkin_pain"; step: 3; nutrition_ok: boolean; sleep: number }
+  | { flow: "checkin_pain"; step: 2; nutrition_ok: boolean }
   | { flow: "meal_confirm"; meal: PendingMeal }
   | { flow: "meal_clarify"; raw_original: string; normalized_original: string; food_hint: string }
   | {
@@ -74,8 +74,8 @@ const DEFAULT_TTL_MS = 10 * 60 * 1000;
 // al fallback generico ("se me escapo...") porque la sesion ya habia expirado.
 const CRON_FLOW_TTL_MS = 3 * 60 * 60 * 1000;
 const FLOW_TTL_MS: Partial<Record<SessionState["flow"], number>> = {
+  morning_sleep: CRON_FLOW_TTL_MS,
   checkin_nutrition: CRON_FLOW_TTL_MS,
-  checkin_sleep: CRON_FLOW_TTL_MS,
   checkin_pain: CRON_FLOW_TTL_MS,
   weight_capture: CRON_FLOW_TTL_MS,
 };

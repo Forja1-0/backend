@@ -2,7 +2,6 @@ import { query } from "../config/db.js";
 
 export interface CheckinData {
   nutrition_ok: boolean;
-  sleep: number;
   pain: number;
 }
 
@@ -17,6 +16,7 @@ export interface DailySummaryRow {
   protein_adherence_pct: number | null;
   training_completed: boolean | null;
   training_rpe: number | null;
+  sleep: number | null;
   performance_score: number | null;
 }
 
@@ -95,7 +95,7 @@ export async function refreshDailySummary(userId: string): Promise<DailySummaryR
 
   const { rows: final } = await query<DailySummaryRow>(
     `SELECT user_id, summary_date::text, total_kcal, total_protein_g, total_carbs_g, total_fat_g,
-            kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, performance_score
+            kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, sleep, performance_score
      FROM daily_summaries
      WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
     [userId],
@@ -138,12 +138,44 @@ export async function upsertDailySummary(
 
   const { rows: final } = await query<DailySummaryRow>(
     `SELECT user_id, summary_date::text, total_kcal, total_protein_g, total_carbs_g, total_fat_g,
-            kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, performance_score
+            kcal_adherence_pct, protein_adherence_pct, training_completed, training_rpe, sleep, performance_score
      FROM daily_summaries
      WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
     [userId],
   );
   return final[0];
+}
+
+/**
+ * Guarda el sueño (1-10) del día de HOY. Lo carga el flujo MATUTINO (apenas se
+ * levanta el usuario). Crea la fila del día si no existe (la mañana suele correr
+ * antes de cargar comidas) y recalcula el performance_score, que ahora pondera
+ * el sueño. Si todavía no hay datos de nutrición, el score queda NULL y se
+ * completa solo cuando entra la primera comida (refreshDailySummary recalcula).
+ */
+export async function setSleep(userId: string, sleep: number): Promise<void> {
+  await query(
+    `INSERT INTO daily_summaries (user_id, summary_date, sleep)
+     VALUES ($1, CURRENT_DATE, $2)
+     ON CONFLICT (user_id, summary_date) DO UPDATE SET sleep = EXCLUDED.sleep`,
+    [userId, sleep],
+  );
+  await query(
+    `UPDATE daily_summaries
+     SET performance_score = calculate_performance_score($1, CURRENT_DATE)
+     WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
+    [userId],
+  );
+}
+
+/** Sueño (1-10) registrado hoy, o null si todavía no lo cargó esta mañana. */
+export async function getSleepToday(userId: string): Promise<number | null> {
+  const { rows } = await query<{ sleep: number | null }>(
+    `SELECT sleep FROM daily_summaries
+     WHERE user_id = $1 AND summary_date = CURRENT_DATE`,
+    [userId],
+  );
+  return rows[0]?.sleep ?? null;
 }
 
 /** True si el user ya tiene daily_summary hoy con respuesta de checkin (sleep != null heuristica). */
